@@ -1,0 +1,211 @@
+---
+import Dashboard from '../../../layouts/Dashboard.astro';
+import InputCapture from '../../../components/InputCapture';
+import MinutesDraftEditor from '../../../components/MinutesDraftEditor';
+import DistributionPanel from '../../../components/DistributionPanel';
+import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import type { Minutes, Distribution, Attendee } from '../../../types';
+
+const { id } = Astro.params;
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+if (!id) return Astro.redirect('/dashboard/meetings');
+
+const { data: meeting, error } = await supabase
+  .from('meetings')
+  .select('*')
+  .eq('id', id)
+  .single();
+
+if (error || !meeting || meeting.created_by !== user!.id) {
+  return Astro.redirect('/dashboard/meetings');
+}
+
+const { data: minutes } = await supabase
+  .from('minutes')
+  .select('*')
+  .eq('meeting_id', id)
+  .maybeSingle() as { data: Minutes | null };
+
+const { data: distributions } = await supabase
+  .from('distributions')
+  .select('*')
+  .eq('meeting_id', id)
+  .order('sent_at', { ascending: false }) as { data: Distribution[] | null };
+
+const { data: approvalData } = await supabase
+  .from('approvals')
+  .select('approved_by_email, approved_at')
+  .eq('minutes_id', minutes?.id ?? '')
+  .maybeSingle();
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draft',
+  minutes_draft: 'In review',
+  approved: 'Approved',
+  distributed: 'Distributed',
+};
+
+const STATUS_CLASS: Record<string, string> = {
+  draft: 'badge-draft',
+  minutes_draft: 'badge bg-state-warning/15 text-state-warning',
+  approved: 'badge-sealed',
+  distributed: 'badge-distributed',
+};
+
+// Step indicators
+const steps = [
+  { key: 'content', label: 'Content', done: meeting.status !== 'draft' },
+  { key: 'draft', label: 'Draft minutes', done: ['approved', 'distributed'].includes(meeting.status) },
+  { key: 'approve', label: 'Approve & seal', done: ['approved', 'distributed'].includes(meeting.status) },
+  { key: 'distribute', label: 'Distribute', done: meeting.status === 'distributed' },
+];
+---
+
+<Dashboard
+  title={meeting.title}
+  back={{ href: '/dashboard/meetings', label: 'Meetings' }}
+>
+  <!-- Meeting meta -->
+  <div class="flex flex-wrap items-start gap-4 mb-6 -mt-2">
+    <div class="flex-1">
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class={STATUS_CLASS[meeting.status] ?? 'badge-draft'}>
+          {STATUS_LABEL[meeting.status] ?? meeting.status}
+        </span>
+        <span class="text-sm text-ink-secondary">{meeting.date}</span>
+        {meeting.location && <span class="text-sm text-ink-muted">{meeting.location}</span>}
+        {(meeting.attendees as Attendee[]).length > 0 && (
+          <span class="text-sm text-ink-muted">
+            {(meeting.attendees as Attendee[]).length} attendee{(meeting.attendees as Attendee[]).length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+      {(meeting.attendees as Attendee[]).length > 0 && (
+        <p class="text-xs text-ink-muted mt-1">
+          {(meeting.attendees as Attendee[]).map(a => a.name).join(' · ')}
+        </p>
+      )}
+    </div>
+  </div>
+
+  <!-- Progress steps -->
+  <div class="flex items-center gap-2 mb-8 overflow-x-auto pb-1">
+    {steps.map((step, i) => (
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <div class={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full ${
+          step.done ? 'bg-state-success/15 text-state-success' : 'bg-bg-elevated text-ink-muted'
+        }`}>
+          {step.done && (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M2 5l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          )}
+          {step.label}
+        </div>
+        {i < steps.length - 1 && <span class="text-line-strong">→</span>}
+      </div>
+    ))}
+  </div>
+
+  <!-- Content sections based on status -->
+
+  <!-- STEP 1: Add content (always visible unless approved) -->
+  {(meeting.status === 'draft' || meeting.status === 'minutes_draft') && (
+    <section class="card mb-6">
+      <h2 class="text-base font-semibold text-ink-primary mb-1">
+        {meeting.status === 'minutes_draft' ? 'Update content' : '1. Add meeting content'}
+      </h2>
+      <p class="text-sm text-ink-secondary mb-5">
+        {meeting.status === 'minutes_draft'
+          ? 'Re-draft minutes from updated content, or skip to editing the draft below.'
+          : 'Record, upload, or paste your meeting transcript to generate AI-drafted minutes.'}
+      </p>
+      <InputCapture meetingId={id} client:load />
+    </section>
+  )}
+
+  <!-- STEP 2: Minutes draft (visible once draft exists) -->
+  {minutes && (
+    <section class="card mb-6">
+      <div class="flex items-center justify-between mb-1">
+        <h2 class="text-base font-semibold text-ink-primary">
+          {['approved', 'distributed'].includes(meeting.status) ? 'Sealed minutes' : '2. Review & edit minutes'}
+        </h2>
+        {minutes.content_hash && (
+          <div class="flex items-center gap-1.5 text-xs text-accent">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            Sealed
+          </div>
+        )}
+      </div>
+      {minutes.content_hash && (
+        <div class="mb-4">
+          <p class="font-mono text-xs text-ink-muted break-all">SHA-256: {minutes.content_hash}</p>
+          {approvalData && (
+            <p class="text-xs text-ink-muted mt-1">
+              Approved by {approvalData.approved_by_email} · {new Date(approvalData.approved_at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      )}
+      <MinutesDraftEditor
+        meetingId={id}
+        initialSummary={minutes.summary ?? ''}
+        initialDecisions={minutes.decisions ?? []}
+        initialActions={minutes.actions ?? []}
+        initialDiscussion={minutes.discussion ?? []}
+        isSealed={!!minutes.sealed_at}
+        client:load
+      />
+    </section>
+  )}
+
+  <!-- STEP 3: Distribution (visible once approved) -->
+  {['approved', 'distributed'].includes(meeting.status) && (
+    <section class="card">
+      <h2 class="text-base font-semibold text-ink-primary mb-1">
+        {meeting.status === 'distributed' ? 'Acknowledgement tracking' : '3. Distribute & track acknowledgement'}
+      </h2>
+      <p class="text-sm text-ink-secondary mb-5">
+        {meeting.status === 'distributed'
+          ? 'Track who has acknowledged receipt of the approved minutes.'
+          : 'Send the sealed minutes to attendees. Recipients acknowledge via a secure link — no account required.'}
+      </p>
+
+      {minutes?.pdf_path && (
+        <div class="flex items-center gap-3 mb-5 p-3 bg-bg-elevated border border-line rounded-lg">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="text-state-danger flex-shrink-0">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5"/>
+          </svg>
+          <span class="text-sm text-ink-secondary flex-1">Sealed PDF ready</span>
+          <a
+            href={`/api/meetings/${id}/pdf`}
+            class="text-xs text-accent hover:text-accent-dim transition-colors font-medium"
+          >
+            Download
+          </a>
+        </div>
+      )}
+
+      <DistributionPanel
+        meetingId={id}
+        attendees={meeting.attendees as Attendee[]}
+        distributions={distributions ?? []}
+        client:load
+      />
+    </section>
+  )}
+
+  <!-- Empty state for no minutes yet -->
+  {!minutes && meeting.status !== 'draft' && (
+    <div class="card text-center py-8">
+      <p class="text-sm text-ink-muted">No minutes drafted yet.</p>
+    </div>
+  )}
+</Dashboard>

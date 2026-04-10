@@ -1,0 +1,75 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import DecisionRegister from '../../components/DecisionRegister';
+import { createSupabaseServerClient } from '../../lib/supabase-server';
+import type { Decision, ActionItem } from '../../types';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+// Fetch all approved minutes + their meetings
+const { data: rows } = await supabase
+  .from('minutes')
+  .select(`
+    id,
+    decisions,
+    actions,
+    meetings!inner(id, title, date, created_by)
+  `)
+  .not('sealed_at', 'is', null);
+
+// Flatten to register entries
+const entries: Array<{
+  id: string;
+  meeting_id: string;
+  meeting_title: string;
+  meeting_date: string;
+  type: 'decision' | 'action';
+  text: string;
+  outcome?: string;
+  owner?: string;
+  due_date?: string;
+  status?: string;
+}> = [];
+
+for (const row of rows ?? []) {
+  const m = (row as any).meetings;
+  if (!m || m.created_by !== user!.id) continue;
+
+  for (const d of (row.decisions as Decision[]) ?? []) {
+    entries.push({
+      id: d.id,
+      meeting_id: m.id,
+      meeting_title: m.title,
+      meeting_date: m.date,
+      type: 'decision',
+      text: d.text,
+      outcome: d.outcome,
+    });
+  }
+
+  for (const a of (row.actions as ActionItem[]) ?? []) {
+    entries.push({
+      id: a.id,
+      meeting_id: m.id,
+      meeting_title: m.title,
+      meeting_date: m.date,
+      type: 'action',
+      text: a.text,
+      owner: a.owner,
+      due_date: a.due_date,
+      status: a.status,
+    });
+  }
+}
+
+// Sort by meeting date desc
+entries.sort((a, b) => b.meeting_date.localeCompare(a.meeting_date));
+---
+
+<Dashboard title="Decision & Action Register">
+  <p class="text-sm text-ink-secondary mb-6 -mt-2">
+    All decisions and action items from approved meetings, in one place.
+  </p>
+  <DecisionRegister entries={entries} client:load />
+</Dashboard>

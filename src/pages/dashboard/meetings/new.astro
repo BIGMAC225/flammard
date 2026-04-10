@@ -1,0 +1,13 @@
+---
+import Dashboard from '../../../layouts/Dashboard.astro';
+import MeetingForm from '../../../components/MeetingForm';
+---
+
+<Dashboard title="New meeting" back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
+  <div class="max-w-2xl">
+    <p class="text-sm text-ink-secondary mb-8">
+      Add the meeting details and attendees. After creating the meeting you'll be able to add your transcript or recording.
+    </p>
+    <MeetingForm client:load />
+  </div>
+</Dashboard>

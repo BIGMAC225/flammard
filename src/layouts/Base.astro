@@ -1,0 +1,29 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+  noIndex?: boolean;
+}
+
+const appName = import.meta.env.PUBLIC_APP_NAME || 'Flammard';
+const { title, description, noIndex = false } = Astro.props;
+const pageTitle = title ? `${title} — ${appName}` : appName;
+const metaDesc = description ?? 'Meeting records your organization can stand behind.';
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content={metaDesc} />
+  {noIndex && <meta name="robots" content="noindex,nofollow" />}
+  <title>{pageTitle}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <slot />
+</body>
+</html>

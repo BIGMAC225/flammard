@@ -1,0 +1,87 @@
+---
+import Dashboard from '../../../layouts/Dashboard.astro';
+import { createSupabaseServerClient } from '../../../lib/supabase-server';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const { data: meetings } = await supabase
+  .from('meetings')
+  .select('id, title, date, location, status, attendees, created_at')
+  .eq('created_by', user!.id)
+  .order('date', { ascending: false });
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draft',
+  minutes_draft: 'In review',
+  approved: 'Approved',
+  distributed: 'Distributed',
+};
+const STATUS_CLASS: Record<string, string> = {
+  draft: 'badge-draft',
+  minutes_draft: 'badge bg-state-warning/15 text-state-warning',
+  approved: 'badge-sealed',
+  distributed: 'badge-distributed',
+};
+---
+
+<Dashboard title="Meetings">
+  <div class="flex items-center justify-between mb-6 -mt-2">
+    <p class="text-sm text-ink-secondary">{meetings?.length ?? 0} meeting{meetings?.length !== 1 ? 's' : ''}</p>
+    <a href="/dashboard/meetings/new" class="btn-primary">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      New meeting
+    </a>
+  </div>
+
+  {!meetings?.length ? (
+    <div class="card text-center py-16">
+      <div class="text-5xl mb-4">📋</div>
+      <p class="text-lg font-medium text-ink-primary mb-2">No meetings yet</p>
+      <p class="text-sm text-ink-secondary mb-6">Create your first meeting to get started.</p>
+      <a href="/dashboard/meetings/new" class="btn-primary">Create meeting</a>
+    </div>
+  ) : (
+    <div class="border border-line rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-line bg-bg-elevated">
+            <th class="text-left px-5 py-3 text-xs font-medium text-ink-muted uppercase tracking-wide">Meeting</th>
+            <th class="text-left px-5 py-3 text-xs font-medium text-ink-muted uppercase tracking-wide hidden md:table-cell">Date</th>
+            <th class="text-left px-5 py-3 text-xs font-medium text-ink-muted uppercase tracking-wide hidden sm:table-cell">Attendees</th>
+            <th class="text-left px-5 py-3 text-xs font-medium text-ink-muted uppercase tracking-wide">Status</th>
+            <th class="px-5 py-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {meetings.map(m => (
+            <tr class="border-b border-line last:border-0 hover:bg-bg-elevated/40 transition-colors">
+              <td class="px-5 py-3.5">
+                <a href={`/dashboard/meetings/${m.id}`} class="font-medium text-ink-primary hover:text-accent transition-colors">
+                  {m.title}
+                </a>
+                {m.location && <p class="text-xs text-ink-muted mt-0.5">{m.location}</p>}
+              </td>
+              <td class="px-5 py-3.5 text-ink-secondary hidden md:table-cell">{m.date}</td>
+              <td class="px-5 py-3.5 text-ink-secondary hidden sm:table-cell">
+                {(m.attendees as any[])?.length ?? 0}
+              </td>
+              <td class="px-5 py-3.5">
+                <span class={STATUS_CLASS[m.status] ?? 'badge-draft'}>
+                  {STATUS_LABEL[m.status] ?? m.status}
+                </span>
+              </td>
+              <td class="px-5 py-3.5 text-right">
+                <a href={`/dashboard/meetings/${m.id}`} class="text-ink-muted hover:text-accent transition-colors text-xs">
+                  Open →
+                </a>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )}
+</Dashboard>

@@ -1,0 +1,101 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { createSupabaseServerClient } from '../../lib/supabase-server';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const { data: meetings } = await supabase
+  .from('meetings')
+  .select('id, title, date, status, attendees')
+  .eq('created_by', user!.id)
+  .order('date', { ascending: false })
+  .limit(10);
+
+const statusCounts = {
+  total: meetings?.length ?? 0,
+  approved: meetings?.filter(m => m.status === 'approved' || m.status === 'distributed').length ?? 0,
+  draft: meetings?.filter(m => m.status === 'draft' || m.status === 'minutes_draft').length ?? 0,
+  distributed: meetings?.filter(m => m.status === 'distributed').length ?? 0,
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draft',
+  minutes_draft: 'In review',
+  approved: 'Approved',
+  distributed: 'Distributed',
+};
+const STATUS_CLASS: Record<string, string> = {
+  draft: 'badge-draft',
+  minutes_draft: 'badge bg-state-warning/15 text-state-warning',
+  approved: 'badge-sealed',
+  distributed: 'badge-distributed',
+};
+---
+
+<Dashboard title="">
+  <!-- Header row -->
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-semibold text-ink-primary">Dashboard</h1>
+      <p class="text-sm text-ink-secondary mt-1">Welcome back, {user?.user_metadata?.full_name ?? user?.email}</p>
+    </div>
+    <a href="/dashboard/meetings/new" class="btn-primary">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      New meeting
+    </a>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+    {[
+      { label: 'Total meetings', val: statusCounts.total },
+      { label: 'In progress', val: statusCounts.draft },
+      { label: 'Approved', val: statusCounts.approved },
+      { label: 'Distributed', val: statusCounts.distributed },
+    ].map(({ label, val }) => (
+      <div class="card py-5">
+        <div class="text-3xl font-semibold text-ink-primary">{val}</div>
+        <div class="text-xs text-ink-secondary mt-1">{label}</div>
+      </div>
+    ))}
+  </div>
+
+  <!-- Recent meetings -->
+  <div>
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-base font-semibold text-ink-primary">Recent meetings</h2>
+      <a href="/dashboard/meetings" class="text-sm text-accent hover:text-accent-dim transition-colors">View all →</a>
+    </div>
+
+    {!meetings?.length ? (
+      <div class="card text-center py-12">
+        <div class="text-4xl mb-3">📋</div>
+        <p class="text-ink-secondary text-sm mb-4">No meetings yet. Create your first one.</p>
+        <a href="/dashboard/meetings/new" class="btn-primary">Create meeting</a>
+      </div>
+    ) : (
+      <div class="border border-line rounded-xl overflow-hidden">
+        {meetings.map(m => (
+          <a
+            href={`/dashboard/meetings/${m.id}`}
+            class="flex items-center gap-4 px-5 py-4 border-b border-line last:border-0 hover:bg-bg-elevated/50 transition-colors"
+          >
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-ink-primary truncate">{m.title}</p>
+              <p class="text-xs text-ink-muted mt-0.5">{m.date} · {(m.attendees as any[])?.length ?? 0} attendee{(m.attendees as any[])?.length !== 1 ? 's' : ''}</p>
+            </div>
+            <span class={STATUS_CLASS[m.status] ?? 'badge-draft'}>
+              {STATUS_LABEL[m.status] ?? m.status}
+            </span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="text-ink-muted flex-shrink-0">
+              <path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        ))}
+      </div>
+    )}
+  </div>
+</Dashboard>

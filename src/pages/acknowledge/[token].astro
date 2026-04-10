@@ -1,0 +1,55 @@
+---
+import Base from '../../layouts/Base.astro';
+import AcknowledgePage from '../../components/AcknowledgePage';
+import { createServiceClient } from '../../lib/supabase-server';
+import type { Minutes, Meeting } from '../../types';
+
+const { token } = Astro.params;
+const appName = import.meta.env.PUBLIC_APP_NAME || 'Flammard';
+
+if (!token) return Astro.redirect('/');
+
+const supabase = createServiceClient();
+
+// Look up distribution by token
+const { data: dist } = await supabase
+  .from('distributions')
+  .select('id, meeting_id, minutes_id, recipient_email, recipient_name, acknowledged_at')
+  .eq('token', token)
+  .maybeSingle();
+
+if (!dist) {
+  return new Response('Invalid or expired link.', { status: 404 });
+}
+
+const { data: meeting } = await supabase
+  .from('meetings')
+  .select('*')
+  .eq('id', dist.meeting_id)
+  .single() as { data: Meeting | null };
+
+const { data: minutes } = await supabase
+  .from('minutes')
+  .select('*')
+  .eq('id', dist.minutes_id)
+  .single() as { data: Minutes | null };
+
+if (!meeting || !minutes) {
+  return new Response('Record not found.', { status: 404 });
+}
+---
+
+<Base
+  title={`${meeting.title} — Minutes`}
+  description={`Meeting minutes for ${meeting.title} on ${meeting.date}`}
+  noIndex
+>
+  <AcknowledgePage
+    token={token}
+    meeting={meeting}
+    minutes={minutes}
+    alreadyAcknowledged={!!dist.acknowledged_at}
+    appName={appName}
+    client:load
+  />
+</Base>

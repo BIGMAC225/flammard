@@ -1,0 +1,58 @@
+---
+import Base from './Base.astro';
+import { createSupabaseServerClient } from '../lib/supabase-server';
+
+interface Props {
+  title?: string;
+  back?: { href: string; label: string };
+}
+
+const { title, back } = Astro.props;
+const appName = import.meta.env.PUBLIC_APP_NAME || 'Flammard';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+---
+
+<Base title={title} noIndex>
+  <div class="min-h-screen flex flex-col">
+    <!-- Top nav -->
+    <header class="border-b border-line bg-bg-surface/80 backdrop-blur-sm sticky top-0 z-40">
+      <div class="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          {back ? (
+            <a href={back.href} class="flex items-center gap-1.5 text-ink-secondary hover:text-ink-primary transition-colors text-sm">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M8.5 2.5L4 7l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              {back.label}
+            </a>
+          ) : (
+            <a href="/dashboard" class="font-semibold text-ink-primary text-sm tracking-tight">{appName}</a>
+          )}
+        </div>
+
+        <nav class="hidden sm:flex items-center gap-1">
+          <a href="/dashboard" class="btn-ghost text-xs">Dashboard</a>
+          <a href="/dashboard/meetings" class="btn-ghost text-xs">Meetings</a>
+          <a href="/dashboard/register" class="btn-ghost text-xs">Register</a>
+        </nav>
+
+        <div class="flex items-center gap-2">
+          <span class="hidden sm:block text-xs text-ink-muted">{user?.email}</span>
+          <form method="POST" action="/api/auth/logout">
+            <button type="submit" class="btn-ghost text-xs">Sign out</button>
+          </form>
+        </div>
+      </div>
+    </header>
+
+    <!-- Page content -->
+    <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
+      {title && (
+        <h1 class="text-2xl font-semibold text-ink-primary mb-6">{title}</h1>
+      )}
+      <slot />
+    </main>
+  </div>
+</Base>
