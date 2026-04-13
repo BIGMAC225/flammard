@@ -1,0 +1,121 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { createSupabaseServerClient } from '../../lib/supabase-server';
+import type { Issue } from '../../types';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const { data: issues } = await supabase
+  .from('issues')
+  .select('*, meetings(title, date)')
+  .eq('created_by', user!.id)
+  .order('status', { ascending: true })
+  .order('priority', { ascending: false })
+  .order('created_at', { ascending: false }) as { data: (Issue & { meetings: { title: string; date: string } | null })[] | null };
+
+const open = issues?.filter(i => i.status === 'open') ?? [];
+const solved = issues?.filter(i => i.status === 'solved') ?? [];
+const dropped = issues?.filter(i => i.status === 'dropped') ?? [];
+
+const PRIORITY_DOT: Record<string, string> = {
+  high: 'bg-state-danger',
+  medium: 'bg-state-warning',
+  low: 'bg-ink-muted',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  open: 'badge bg-state-danger/15 text-state-danger',
+  solved: 'badge bg-state-success/15 text-state-success',
+  dropped: 'badge bg-bg-elevated text-ink-muted',
+};
+---
+
+<Dashboard title="Issues">
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-semibold text-ink-primary">Issues</h1>
+      <p class="text-sm text-ink-secondary mt-1">IDS items across all L10 meetings.</p>
+    </div>
+    {open.length > 0 && (
+      <div class="text-right">
+        <div class="text-3xl font-semibold text-state-danger">{open.length}</div>
+        <div class="text-xs text-ink-muted">open</div>
+      </div>
+    )}
+  </div>
+
+  <!-- Stats -->
+  {issues && issues.length > 0 && (
+    <div class="grid grid-cols-3 gap-4 mb-8">
+      {[
+        { label: 'Open', val: open.length, cls: 'text-state-danger' },
+        { label: 'Solved', val: solved.length, cls: 'text-state-success' },
+        { label: 'Dropped', val: dropped.length, cls: 'text-ink-muted' },
+      ].map(({ label, val, cls }) => (
+        <div class="card py-4">
+          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
+          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        </div>
+      ))}
+    </div>
+  )}
+
+  {!issues?.length ? (
+    <div class="card text-center py-12">
+      <p class="text-sm text-ink-secondary mb-2">No issues yet.</p>
+      <p class="text-xs text-ink-muted">Issues are created when you upload an EOS recap or add them in a meeting.</p>
+    </div>
+  ) : (
+    <div class="space-y-6">
+      {open.length > 0 && (
+        <div>
+          <p class="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">
+            Open <span class="font-normal ml-1">({open.length})</span>
+          </p>
+          <div class="border border-line rounded-xl overflow-hidden">
+            {open.map((issue, i) => (
+              <div class={`flex items-start gap-4 px-5 py-4 ${i < open.length - 1 ? 'border-b border-line' : ''}`}>
+                <div class={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${PRIORITY_DOT[issue.priority]}`} title={`${issue.priority} priority`} />
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium text-ink-primary">{issue.title}</p>
+                  {issue.description && (
+                    <p class="text-xs text-ink-muted mt-0.5 truncate">{issue.description}</p>
+                  )}
+                  {issue.meetings && (
+                    <a href={`/dashboard/meetings/${issue.meeting_id}?tab=eos`} class="text-xs text-accent hover:text-accent-dim transition-colors mt-0.5 inline-block">
+                      {issue.meetings.title} · {issue.meetings.date}
+                    </a>
+                  )}
+                </div>
+                <span class="text-xs text-ink-muted capitalize flex-shrink-0">{issue.priority}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {solved.length > 0 && (
+        <div>
+          <p class="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">
+            Solved <span class="font-normal ml-1">({solved.length})</span>
+          </p>
+          <div class="border border-line rounded-xl overflow-hidden">
+            {solved.map((issue, i) => (
+              <div class={`flex items-start gap-4 px-5 py-4 ${i < solved.length - 1 ? 'border-b border-line' : ''}`}>
+                <div class="w-2 h-2 rounded-full flex-shrink-0 mt-1.5 bg-state-success" />
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-ink-secondary">{issue.title}</p>
+                  {issue.resolution && (
+                    <p class="text-xs text-ink-muted mt-0.5">↳ {issue.resolution}</p>
+                  )}
+                </div>
+                <span class={STATUS_COLORS['solved']}>Solved</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )}
+</Dashboard>

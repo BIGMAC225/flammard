@@ -1,0 +1,113 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { createSupabaseServerClient } from '../../lib/supabase-server';
+import type { Rock } from '../../types';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const { data: rocks } = await supabase
+  .from('rocks')
+  .select('*')
+  .eq('created_by', user!.id)
+  .order('status', { ascending: true })
+  .order('created_at', { ascending: false }) as { data: Rock[] | null };
+
+const statusGroups = {
+  on_track: rocks?.filter(r => r.status === 'on_track') ?? [],
+  off_track: rocks?.filter(r => r.status === 'off_track') ?? [],
+  complete: rocks?.filter(r => r.status === 'complete') ?? [],
+  dropped: rocks?.filter(r => r.status === 'dropped') ?? [],
+};
+
+const totalActive = statusGroups.on_track.length + statusGroups.off_track.length;
+const onTrackPct = totalActive > 0
+  ? Math.round((statusGroups.on_track.length / totalActive) * 100)
+  : null;
+
+const STATUS_LABELS = {
+  on_track: 'On Track',
+  off_track: 'Off Track',
+  complete: 'Complete',
+  dropped: 'Dropped',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  on_track: 'badge bg-state-success/15 text-state-success',
+  off_track: 'badge bg-state-danger/15 text-state-danger',
+  complete: 'badge bg-accent/15 text-accent',
+  dropped: 'badge bg-bg-elevated text-ink-muted',
+};
+---
+
+<Dashboard title="Rocks">
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-semibold text-ink-primary">Rocks</h1>
+      <p class="text-sm text-ink-secondary mt-1">Quarterly goals tracked across all meetings.</p>
+    </div>
+    {onTrackPct !== null && (
+      <div class="text-right">
+        <div class="text-3xl font-semibold text-ink-primary">{onTrackPct}%</div>
+        <div class="text-xs text-ink-muted">on track</div>
+      </div>
+    )}
+  </div>
+
+  <!-- Stats row -->
+  {rocks && rocks.length > 0 && (
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+      {[
+        { label: 'On Track', val: statusGroups.on_track.length, cls: 'text-state-success' },
+        { label: 'Off Track', val: statusGroups.off_track.length, cls: 'text-state-danger' },
+        { label: 'Complete', val: statusGroups.complete.length, cls: 'text-accent' },
+        { label: 'Dropped', val: statusGroups.dropped.length, cls: 'text-ink-muted' },
+      ].map(({ label, val, cls }) => (
+        <div class="card py-4">
+          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
+          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        </div>
+      ))}
+    </div>
+  )}
+
+  <!-- Rocks list -->
+  {!rocks?.length ? (
+    <div class="card text-center py-12">
+      <p class="text-sm text-ink-secondary mb-2">No rocks yet.</p>
+      <p class="text-xs text-ink-muted">Upload an EOS recap or add rocks in a meeting to track quarterly goals.</p>
+    </div>
+  ) : (
+    <div class="space-y-3">
+      {['on_track', 'off_track', 'complete', 'dropped'].map(status => {
+        const group = statusGroups[status as keyof typeof statusGroups];
+        if (!group.length) return null;
+        return (
+          <div>
+            <p class="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">
+              {STATUS_LABELS[status as keyof typeof STATUS_LABELS]}
+              <span class="ml-1.5 font-normal">({group.length})</span>
+            </p>
+            <div class="border border-line rounded-xl overflow-hidden">
+              {group.map((rock, i) => (
+                <div class={`flex items-center gap-4 px-5 py-4 ${i < group.length - 1 ? 'border-b border-line' : ''}`}>
+                  <span class={STATUS_COLORS[rock.status]}>
+                    {STATUS_LABELS[rock.status as keyof typeof STATUS_LABELS]}
+                  </span>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-ink-primary truncate">{rock.title}</p>
+                    <div class="flex items-center gap-3 mt-0.5">
+                      {rock.owner && <p class="text-xs text-ink-muted">{rock.owner}</p>}
+                      {rock.quarter && <p class="text-xs text-ink-muted">{rock.quarter}</p>}
+                      {rock.due_date && <p class="text-xs text-ink-muted">Due {rock.due_date}</p>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  )}
+</Dashboard>

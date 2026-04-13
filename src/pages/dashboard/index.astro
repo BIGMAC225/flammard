@@ -5,12 +5,33 @@ import { createSupabaseServerClient } from '../../lib/supabase-server';
 const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
 const { data: { user } } = await supabase.auth.getUser();
 
-const { data: meetings } = await supabase
-  .from('meetings')
-  .select('id, title, date, status, attendees')
-  .eq('created_by', user!.id)
-  .order('date', { ascending: false })
-  .limit(10);
+const [
+  { data: meetings },
+  { data: rocks },
+  { data: openTodos },
+  { data: openIssues },
+] = await Promise.all([
+  supabase
+    .from('meetings')
+    .select('id, title, date, status, attendees')
+    .eq('created_by', user!.id)
+    .order('date', { ascending: false })
+    .limit(8),
+  supabase
+    .from('rocks')
+    .select('id, status')
+    .eq('created_by', user!.id),
+  supabase
+    .from('todos')
+    .select('id')
+    .eq('created_by', user!.id)
+    .eq('status', 'open'),
+  supabase
+    .from('issues')
+    .select('id')
+    .eq('created_by', user!.id)
+    .eq('status', 'open'),
+]);
 
 const statusCounts = {
   total: meetings?.length ?? 0,
@@ -18,6 +39,10 @@ const statusCounts = {
   draft: meetings?.filter(m => m.status === 'draft' || m.status === 'minutes_draft').length ?? 0,
   distributed: meetings?.filter(m => m.status === 'distributed').length ?? 0,
 };
+
+const rocksOnTrack = rocks?.filter(r => r.status === 'on_track').length ?? 0;
+const rocksTotal = rocks?.filter(r => r.status === 'on_track' || r.status === 'off_track').length ?? 0;
+const rocksPct = rocksTotal > 0 ? Math.round((rocksOnTrack / rocksTotal) * 100) : null;
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
@@ -48,19 +73,30 @@ const STATUS_CLASS: Record<string, string> = {
     </a>
   </div>
 
-  <!-- Stats -->
+  <!-- EOS KPIs -->
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-    {[
-      { label: 'Total meetings', val: statusCounts.total },
-      { label: 'In progress', val: statusCounts.draft },
-      { label: 'Approved', val: statusCounts.approved },
-      { label: 'Distributed', val: statusCounts.distributed },
-    ].map(({ label, val }) => (
-      <div class="card py-5">
-        <div class="text-3xl font-semibold text-ink-primary">{val}</div>
-        <div class="text-xs text-ink-secondary mt-1">{label}</div>
+    <div class="card py-5">
+      <div class="text-3xl font-semibold text-ink-primary">{statusCounts.total}</div>
+      <div class="text-xs text-ink-secondary mt-1">Total meetings</div>
+    </div>
+    <a href="/dashboard/rocks" class="card py-5 hover:border-line-strong transition-colors block">
+      <div class={`text-3xl font-semibold ${rocksPct !== null ? (rocksPct >= 70 ? 'text-state-success' : 'text-state-warning') : 'text-ink-primary'}`}>
+        {rocksPct !== null ? `${rocksPct}%` : rocksTotal === 0 ? '—' : '0%'}
       </div>
-    ))}
+      <div class="text-xs text-ink-secondary mt-1">Rocks on track</div>
+    </a>
+    <a href="/dashboard/todos" class="card py-5 hover:border-line-strong transition-colors block">
+      <div class={`text-3xl font-semibold ${(openTodos?.length ?? 0) > 0 ? 'text-state-warning' : 'text-ink-primary'}`}>
+        {openTodos?.length ?? 0}
+      </div>
+      <div class="text-xs text-ink-secondary mt-1">Open to-dos</div>
+    </a>
+    <a href="/dashboard/issues" class="card py-5 hover:border-line-strong transition-colors block">
+      <div class={`text-3xl font-semibold ${(openIssues?.length ?? 0) > 0 ? 'text-state-danger' : 'text-ink-primary'}`}>
+        {openIssues?.length ?? 0}
+      </div>
+      <div class="text-xs text-ink-secondary mt-1">Open issues</div>
+    </a>
   </div>
 
   <!-- Recent meetings -->

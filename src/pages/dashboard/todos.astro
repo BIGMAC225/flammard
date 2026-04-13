@@ -1,0 +1,141 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { createSupabaseServerClient } from '../../lib/supabase-server';
+import type { Todo } from '../../types';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
+const { data: { user } } = await supabase.auth.getUser();
+
+const { data: todos } = await supabase
+  .from('todos')
+  .select('*, meetings(title, date)')
+  .eq('created_by', user!.id)
+  .order('created_at', { ascending: false }) as { data: (Todo & { meetings: { title: string; date: string } | null })[] | null };
+
+const open = todos?.filter(t => t.status === 'open') ?? [];
+const done = todos?.filter(t => t.status === 'done') ?? [];
+const notDone = todos?.filter(t => t.status === 'not_done') ?? [];
+const dropped = todos?.filter(t => t.status === 'dropped') ?? [];
+
+const STATUS_COLORS: Record<string, string> = {
+  open: 'badge bg-state-warning/15 text-state-warning',
+  done: 'badge bg-state-success/15 text-state-success',
+  not_done: 'badge bg-state-danger/15 text-state-danger',
+  dropped: 'badge bg-bg-elevated text-ink-muted',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  open: 'Open',
+  done: 'Done',
+  not_done: 'Not Done',
+  dropped: 'Dropped',
+};
+---
+
+<Dashboard title="To-Dos">
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-semibold text-ink-primary">To-Dos</h1>
+      <p class="text-sm text-ink-secondary mt-1">7-day action items across all L10 meetings.</p>
+    </div>
+    {open.length > 0 && (
+      <div class="text-right">
+        <div class="text-3xl font-semibold text-state-warning">{open.length}</div>
+        <div class="text-xs text-ink-muted">open</div>
+      </div>
+    )}
+  </div>
+
+  <!-- Stats -->
+  {todos && todos.length > 0 && (
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+      {[
+        { label: 'Open', val: open.length, cls: 'text-state-warning' },
+        { label: 'Done', val: done.length, cls: 'text-state-success' },
+        { label: 'Not Done', val: notDone.length, cls: 'text-state-danger' },
+        { label: 'Dropped', val: dropped.length, cls: 'text-ink-muted' },
+      ].map(({ label, val, cls }) => (
+        <div class="card py-4">
+          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
+          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        </div>
+      ))}
+    </div>
+  )}
+
+  {!todos?.length ? (
+    <div class="card text-center py-12">
+      <p class="text-sm text-ink-secondary mb-2">No to-dos yet.</p>
+      <p class="text-xs text-ink-muted">To-dos are created when you upload an EOS recap or add them in a meeting.</p>
+    </div>
+  ) : (
+    <div class="space-y-6">
+      {/* Open first */}
+      {open.length > 0 && (
+        <div>
+          <p class="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">
+            Open <span class="font-normal ml-1">({open.length})</span>
+          </p>
+          <div class="border border-line rounded-xl overflow-hidden">
+            {open.map((todo, i) => (
+              <div class={`flex items-center gap-4 px-5 py-4 ${i < open.length - 1 ? 'border-b border-line' : ''}`}>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium text-ink-primary truncate">{todo.title}</p>
+                  <div class="flex items-center gap-3 mt-0.5">
+                    {todo.owner && <p class="text-xs text-ink-muted">{todo.owner}</p>}
+                    {todo.meetings && (
+                      <a href={`/dashboard/meetings/${todo.meeting_id}?tab=eos`} class="text-xs text-accent hover:text-accent-dim transition-colors">
+                        {todo.meetings.title} · {todo.meetings.date}
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <span class={STATUS_COLORS['open']}>Open</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Not Done */}
+      {notDone.length > 0 && (
+        <div>
+          <p class="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">
+            Not Done <span class="font-normal ml-1">({notDone.length})</span>
+          </p>
+          <div class="border border-line rounded-xl overflow-hidden">
+            {notDone.map((todo, i) => (
+              <div class={`flex items-center gap-4 px-5 py-4 ${i < notDone.length - 1 ? 'border-b border-line' : ''}`}>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-ink-secondary truncate">{todo.title}</p>
+                  {todo.owner && <p class="text-xs text-ink-muted mt-0.5">{todo.owner}</p>}
+                </div>
+                <span class={STATUS_COLORS['not_done']}>Not Done</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Done */}
+      {done.length > 0 && (
+        <div>
+          <p class="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">
+            Done <span class="font-normal ml-1">({done.length})</span>
+          </p>
+          <div class="border border-line rounded-xl overflow-hidden">
+            {done.map((todo, i) => (
+              <div class={`flex items-center gap-4 px-5 py-4 ${i < done.length - 1 ? 'border-b border-line' : ''}`}>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-ink-muted line-through truncate">{todo.title}</p>
+                  {todo.owner && <p class="text-xs text-ink-muted mt-0.5">{todo.owner}</p>}
+                </div>
+                <span class={STATUS_COLORS['done']}>Done</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )}
+</Dashboard>
