@@ -4,9 +4,7 @@ import type { Decision, ActionItem, DiscussionPoint } from '../../../../types';
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const supabase = createSupabaseServerClient(request, cookies);
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -24,10 +22,9 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     discussion: DiscussionPoint[];
   };
 
-  // Verify meeting ownership
   const { data: meeting } = await supabase
     .from('meetings')
-    .select('created_by')
+    .select('created_by, status')
     .eq('id', id)
     .single();
 
@@ -38,16 +35,24 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     });
   }
 
+  // Upsert — creates on first save, updates on subsequent saves
   const { error } = await supabase
     .from('minutes')
-    .update({ summary, decisions, actions, discussion })
-    .eq('meeting_id', id);
+    .upsert(
+      { meeting_id: id, summary, decisions, actions, discussion },
+      { onConflict: 'meeting_id' }
+    );
 
   if (error) {
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // Advance status to minutes_draft if still in draft
+  if (meeting.status === 'draft') {
+    await supabase.from('meetings').update({ status: 'minutes_draft' }).eq('id', id);
   }
 
   return new Response(JSON.stringify({ ok: true }), {

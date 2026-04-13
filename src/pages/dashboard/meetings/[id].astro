@@ -1,15 +1,12 @@
 ---
 import Dashboard from '../../../layouts/Dashboard.astro';
-import EOSUpload from '../../../components/EOSUpload';
-import InputCapture from '../../../components/InputCapture';
 import MinutesDraftEditor from '../../../components/MinutesDraftEditor';
-import DistributionPanel from '../../../components/DistributionPanel';
 import RocksPanel from '../../../components/RocksPanel';
 import TodoPanel from '../../../components/TodoPanel';
 import IssuesPanel from '../../../components/IssuesPanel';
 import HeadlinesPanel from '../../../components/HeadlinesPanel';
 import { createSupabaseServerClient } from '../../../lib/supabase-server';
-import type { Minutes, Distribution, Attendee, MeetingRock, Todo, Issue, Headline } from '../../../types';
+import type { Minutes, MeetingRock, Todo, Issue, Headline, Attendee } from '../../../types';
 
 const { id } = Astro.params;
 const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
@@ -27,93 +24,69 @@ if (error || !meeting || meeting.created_by !== user!.id) {
   return Astro.redirect('/dashboard/meetings');
 }
 
-// Load all related data in parallel
 const [
   { data: minutes },
-  { data: distributions },
-  { data: approvalData },
   { data: meetingRocks },
   { data: todos },
   { data: issues },
   { data: headlines },
+  { data: approvalData },
 ] = await Promise.all([
   supabase.from('minutes').select('*').eq('meeting_id', id).maybeSingle(),
-  supabase.from('distributions').select('*').eq('meeting_id', id).order('sent_at', { ascending: false }),
+  supabase.from('meeting_rocks').select('*').eq('meeting_id', id).order('created_at'),
+  supabase.from('todos').select('*').eq('meeting_id', id).order('created_at'),
+  supabase.from('issues').select('*').eq('meeting_id', id).order('created_at'),
+  supabase.from('headlines').select('*').eq('meeting_id', id).order('created_at'),
   supabase.from('approvals').select('approved_by_email, approved_at').eq('minutes_id', (await supabase.from('minutes').select('id').eq('meeting_id', id).maybeSingle()).data?.id ?? '').maybeSingle(),
-  supabase.from('meeting_rocks').select('*').eq('meeting_id', id).order('created_at', { ascending: true }),
-  supabase.from('todos').select('*').eq('meeting_id', id).order('created_at', { ascending: true }),
-  supabase.from('issues').select('*').eq('meeting_id', id).order('created_at', { ascending: true }),
-  supabase.from('headlines').select('*').eq('meeting_id', id).order('created_at', { ascending: true }),
 ]);
 
 const typedMinutes = minutes as Minutes | null;
-const typedDistributions = distributions as Distribution[] | null;
-const typedRocks = meetingRocks as MeetingRock[] | null;
-const typedTodos = todos as Todo[] | null;
-const typedIssues = issues as Issue[] | null;
-const typedHeadlines = headlines as Headline[] | null;
-
 const attendees = (meeting.attendees as Attendee[]) ?? [];
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
   minutes_draft: 'In review',
   approved: 'Approved',
-  distributed: 'Distributed',
+  distributed: 'Approved',
 };
 const STATUS_CLASS: Record<string, string> = {
   draft: 'badge-draft',
   minutes_draft: 'badge bg-state-warning/15 text-state-warning',
   approved: 'badge-sealed',
-  distributed: 'badge-distributed',
+  distributed: 'badge-sealed',
 };
 
-// Determine active tab from URL
-const url = new URL(Astro.request.url);
-const activeTab = url.searchParams.get('tab') ?? 'eos';
-
-const eosHasData = meeting.eos_analyzed ||
-  (typedRocks && typedRocks.length > 0) ||
-  (typedTodos && typedTodos.length > 0) ||
-  (typedIssues && typedIssues.length > 0) ||
-  (typedHeadlines && typedHeadlines.length > 0);
+const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? 'eos';
 ---
 
-<Dashboard
-  title={meeting.title}
-  back={{ href: '/dashboard/meetings', label: 'Meetings' }}
->
+<Dashboard title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
+
   <!-- Meeting meta -->
-  <div class="flex flex-wrap items-start gap-3 mb-6 -mt-2">
-    <div class="flex items-center gap-3 flex-wrap flex-1">
-      <span class={STATUS_CLASS[meeting.status] ?? 'badge-draft'}>
-        {STATUS_LABEL[meeting.status] ?? meeting.status}
-      </span>
-      <span class="text-sm text-ink-secondary">{meeting.date}</span>
-      {meeting.location && <span class="text-sm text-ink-muted">{meeting.location}</span>}
-      {attendees.length > 0 && (
-        <span class="text-sm text-ink-muted">{attendees.length} attendee{attendees.length !== 1 ? 's' : ''}</span>
-      )}
-      {meeting.meeting_rating != null && (
-        <span class="text-sm text-ink-secondary">
-          <span class="text-ink-muted">Rating:</span> {meeting.meeting_rating}/10
-        </span>
-      )}
-    </div>
+  <div class="flex flex-wrap items-center gap-3 mb-2 -mt-2">
+    <span class={STATUS_CLASS[meeting.status] ?? 'badge-draft'}>
+      {STATUS_LABEL[meeting.status] ?? meeting.status}
+    </span>
+    <span class="text-sm text-ink-secondary">{meeting.date}</span>
+    {meeting.location && <span class="text-sm text-ink-muted">{meeting.location}</span>}
+    {attendees.length > 0 && (
+      <span class="text-sm text-ink-muted">{attendees.length} attendee{attendees.length !== 1 ? 's' : ''}</span>
+    )}
+    {meeting.meeting_rating != null && (
+      <span class="text-sm text-ink-muted">Rating: {meeting.meeting_rating}/10</span>
+    )}
   </div>
 
   {attendees.length > 0 && (
-    <p class="text-xs text-ink-muted -mt-4 mb-6">
-      {attendees.map(a => a.name).join(' · ')}
+    <p class="text-xs text-ink-muted mb-6">
+      {attendees.map((a: Attendee) => a.name).join(' · ')}
     </p>
   )}
 
   <!-- Tab bar -->
-  <div class="flex gap-1 p-1 bg-bg-elevated rounded-xl w-fit mb-6 flex-wrap">
+  <div class="flex gap-1 p-1 bg-bg-elevated rounded-xl w-fit mb-6">
     {[
       { id: 'eos', label: 'EOS Sections' },
       { id: 'minutes', label: 'Minutes' },
-      { id: 'distribute', label: 'Distribute' },
     ].map(tab => (
       <a
         href={`?tab=${tab.id}`}
@@ -124,137 +97,83 @@ const eosHasData = meeting.eos_analyzed ||
         }`}
       >
         {tab.label}
-        {tab.id === 'distribute' && typedMinutes?.sealed_at && (
-          <span class="ml-1.5 text-xs text-accent">●</span>
-        )}
       </a>
     ))}
   </div>
 
-  <!-- ── EOS SECTIONS TAB ─────────────────────────────────────── -->
+  <!-- ── EOS SECTIONS ───────────────────────────────────── -->
   {activeTab === 'eos' && (
     <div class="space-y-6">
-      <!-- Upload EOS Recap -->
-      <section class="card">
-        <div class="flex items-center justify-between mb-1">
-          <h2 class="text-base font-semibold text-ink-primary">EOS Recap Import</h2>
-          {eosHasData && (
-            <span class="badge bg-state-success/15 text-state-success text-xs">Data loaded</span>
-          )}
-        </div>
-        <p class="text-sm text-ink-secondary mb-5">
-          Upload your Ninety.io (or any EOS L10) meeting recap PDF — Claude will extract all structured data automatically.
-        </p>
-        <EOSUpload meetingId={id} client:load />
-      </section>
 
-      <!-- Headlines -->
       <section class="card">
         <h2 class="text-base font-semibold text-ink-primary mb-1">Headlines</h2>
-        <p class="text-sm text-ink-secondary mb-4">Customer wins, employee wins, and good news from the segue.</p>
-        <HeadlinesPanel
-          meetingId={id}
-          initialHeadlines={typedHeadlines ?? []}
-          client:load
-        />
+        <p class="text-sm text-ink-secondary mb-4">Customer wins, employee wins, and good news.</p>
+        <HeadlinesPanel meetingId={id} initialHeadlines={headlines ?? []} client:load />
       </section>
 
-      <!-- Rocks -->
       <section class="card">
-        <div class="flex items-start justify-between mb-1">
+        <div class="flex items-start justify-between mb-4">
           <div>
             <h2 class="text-base font-semibold text-ink-primary">Rocks</h2>
             <p class="text-sm text-ink-secondary mt-0.5">Quarterly goals reviewed at this meeting.</p>
           </div>
-          <a href="/dashboard/rocks" class="text-xs text-accent hover:text-accent-dim transition-colors">
-            All rocks →
-          </a>
+          <a href="/dashboard/rocks" class="text-xs text-accent hover:text-accent-dim transition-colors">All rocks →</a>
         </div>
-        <div class="mt-4">
-          <RocksPanel
-            meetingId={id}
-            initialRocks={typedRocks ?? []}
-            client:load
-          />
-        </div>
+        <RocksPanel meetingId={id} initialRocks={meetingRocks ?? []} client:load />
       </section>
 
-      <!-- To-Dos -->
       <section class="card">
-        <div class="flex items-start justify-between mb-1">
+        <div class="flex items-start justify-between mb-4">
           <div>
             <h2 class="text-base font-semibold text-ink-primary">To-Dos</h2>
-            <p class="text-sm text-ink-secondary mt-0.5">7-day action items assigned or reviewed at this meeting.</p>
+            <p class="text-sm text-ink-secondary mt-0.5">7-day action items for this meeting.</p>
           </div>
-          <a href="/dashboard/todos" class="text-xs text-accent hover:text-accent-dim transition-colors">
-            All to-dos →
-          </a>
+          <a href="/dashboard/todos" class="text-xs text-accent hover:text-accent-dim transition-colors">All to-dos →</a>
         </div>
-        <div class="mt-4">
-          <TodoPanel
-            meetingId={id}
-            initialTodos={typedTodos ?? []}
-            client:load
-          />
-        </div>
+        <TodoPanel meetingId={id} initialTodos={todos ?? []} client:load />
       </section>
 
-      <!-- Issues (IDS) -->
       <section class="card">
-        <div class="flex items-start justify-between mb-1">
+        <div class="flex items-start justify-between mb-4">
           <div>
             <h2 class="text-base font-semibold text-ink-primary">Issues (IDS)</h2>
             <p class="text-sm text-ink-secondary mt-0.5">Issues identified, discussed, and solved.</p>
           </div>
-          <a href="/dashboard/issues" class="text-xs text-accent hover:text-accent-dim transition-colors">
-            All issues →
-          </a>
+          <a href="/dashboard/issues" class="text-xs text-accent hover:text-accent-dim transition-colors">All issues →</a>
         </div>
-        <div class="mt-4">
-          <IssuesPanel
-            meetingId={id}
-            initialIssues={typedIssues ?? []}
-            client:load
-          />
-        </div>
+        <IssuesPanel meetingId={id} initialIssues={issues ?? []} client:load />
       </section>
 
-      <!-- Conclude notes -->
       {meeting.conclude_notes && (
         <section class="card">
           <h2 class="text-base font-semibold text-ink-primary mb-3">Conclude Notes</h2>
           <p class="text-sm text-ink-secondary leading-relaxed">{meeting.conclude_notes}</p>
         </section>
       )}
+
     </div>
   )}
 
-  <!-- ── MINUTES TAB ────────────────────────────────────────── -->
+  <!-- ── MINUTES ────────────────────────────────────────── -->
   {activeTab === 'minutes' && (
     <div class="space-y-6">
-      <!-- Add content (visible unless sealed) -->
-      {!typedMinutes?.sealed_at && (
-        <section class="card">
-          <h2 class="text-base font-semibold text-ink-primary mb-1">
-            {typedMinutes ? 'Update content' : 'Add meeting content'}
-          </h2>
-          <p class="text-sm text-ink-secondary mb-5">
-            {typedMinutes
-              ? 'Re-draft from updated content, or skip to editing the draft below.'
-              : 'Paste transcript, upload a file, or record audio to generate AI-drafted minutes.'}
-          </p>
-          <InputCapture meetingId={id} client:load />
-        </section>
-      )}
-
-      <!-- Minutes draft -->
-      {typedMinutes && (
-        <section class="card">
-          <div class="flex items-center justify-between mb-1">
+      <section class="card">
+        <div class="flex items-center justify-between mb-4">
+          <div>
             <h2 class="text-base font-semibold text-ink-primary">
-              {typedMinutes.sealed_at ? 'Sealed minutes' : 'Review & edit minutes'}
+              {typedMinutes?.sealed_at ? 'Sealed minutes' : 'Meeting minutes'}
             </h2>
-            {typedMinutes.content_hash && (
+            {typedMinutes?.sealed_at && (
+              <p class="font-mono text-xs text-ink-muted mt-1 break-all">SHA-256: {typedMinutes.content_hash}</p>
+            )}
+            {approvalData && (
+              <p class="text-xs text-ink-muted mt-0.5">
+                Approved by {approvalData.approved_by_email} · {new Date(approvalData.approved_at).toLocaleString()}
+              </p>
+            )}
+          </div>
+          {typedMinutes?.sealed_at && (
+            <div class="flex items-center gap-2 flex-shrink-0">
               <div class="flex items-center gap-1.5 text-xs text-accent">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                   <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="1.5"/>
@@ -262,89 +181,26 @@ const eosHasData = meeting.eos_analyzed ||
                 </svg>
                 Sealed
               </div>
-            )}
-          </div>
-          {typedMinutes.content_hash && (
-            <div class="mb-4">
-              <p class="font-mono text-xs text-ink-muted break-all">SHA-256: {typedMinutes.content_hash}</p>
-              {approvalData && (
-                <p class="text-xs text-ink-muted mt-1">
-                  Approved by {approvalData.approved_by_email} · {new Date(approvalData.approved_at).toLocaleString()}
-                </p>
+              {typedMinutes.pdf_path && (
+                <a href={`/api/meetings/${id}/pdf`} class="btn-secondary text-xs py-1.5">
+                  Download PDF
+                </a>
               )}
             </div>
           )}
-          <MinutesDraftEditor
-            meetingId={id}
-            initialSummary={typedMinutes.summary ?? ''}
-            initialDecisions={typedMinutes.decisions ?? []}
-            initialActions={typedMinutes.actions ?? []}
-            initialDiscussion={typedMinutes.discussion ?? []}
-            isSealed={!!typedMinutes.sealed_at}
-            client:load
-          />
-        </section>
-      )}
-
-      {!typedMinutes && (
-        <div class="card text-center py-12">
-          <p class="text-sm text-ink-muted mb-2">No minutes drafted yet.</p>
-          <p class="text-xs text-ink-muted">Add meeting content above to generate an AI draft.</p>
         </div>
-      )}
+
+        <MinutesDraftEditor
+          meetingId={id}
+          initialSummary={typedMinutes?.summary ?? ''}
+          initialDecisions={typedMinutes?.decisions ?? []}
+          initialActions={typedMinutes?.actions ?? []}
+          initialDiscussion={typedMinutes?.discussion ?? []}
+          isSealed={!!typedMinutes?.sealed_at}
+          client:load
+        />
+      </section>
     </div>
   )}
 
-  <!-- ── DISTRIBUTE TAB ─────────────────────────────────────── -->
-  {activeTab === 'distribute' && (
-    <div class="space-y-6">
-      {!typedMinutes?.sealed_at ? (
-        <div class="card text-center py-12">
-          <div class="w-10 h-10 rounded-xl bg-bg-elevated border border-line flex items-center justify-center mx-auto mb-4">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" class="text-ink-muted">
-              <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </div>
-          <p class="text-sm text-ink-secondary mb-1">Minutes must be approved before distribution.</p>
-          <p class="text-xs text-ink-muted">Go to the Minutes tab to draft and approve.</p>
-          <a href="?tab=minutes" class="btn-primary mt-4 inline-flex">Go to Minutes →</a>
-        </div>
-      ) : (
-        <section class="card">
-          <h2 class="text-base font-semibold text-ink-primary mb-1">
-            {meeting.status === 'distributed' ? 'Acknowledgement tracking' : 'Distribute minutes'}
-          </h2>
-          <p class="text-sm text-ink-secondary mb-5">
-            {meeting.status === 'distributed'
-              ? 'Track who has acknowledged receipt of the approved minutes.'
-              : 'Send the sealed minutes to attendees. Recipients confirm via a secure link — no account required.'}
-          </p>
-
-          {typedMinutes.pdf_path && (
-            <div class="flex items-center gap-3 mb-5 p-3 bg-bg-elevated border border-line rounded-lg">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="text-state-danger flex-shrink-0">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" strokeWidth="1.5"/>
-                <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5"/>
-              </svg>
-              <span class="text-sm text-ink-secondary flex-1">Sealed PDF ready</span>
-              <a
-                href={`/api/meetings/${id}/pdf`}
-                class="text-xs text-accent hover:text-accent-dim transition-colors font-medium"
-              >
-                Download
-              </a>
-            </div>
-          )}
-
-          <DistributionPanel
-            meetingId={id}
-            attendees={attendees}
-            distributions={typedDistributions ?? []}
-            client:load
-          />
-        </section>
-      )}
-    </div>
-  )}
 </Dashboard>
