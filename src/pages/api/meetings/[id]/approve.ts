@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../../lib/supabase-server';
+import { createSupabaseServerClient, createServiceClient } from '../../../../lib/supabase-server';
 import { hashMinutes } from '../../../../lib/crypto';
 import { generateMinutesPDF } from '../../../../lib/pdf';
 import type { Attendee } from '../../../../types';
@@ -73,9 +73,10 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     appName: import.meta.env.PUBLIC_APP_NAME || 'Flammard',
   });
 
-  // Store PDF in Supabase Storage
+  // Store PDF in Supabase Storage (service client bypasses storage RLS)
   const pdfPath = `minutes/${id}/${hash.slice(0, 8)}.pdf`;
-  await supabase.storage.from('minutes-pdf').upload(pdfPath, pdfBuffer, {
+  const serviceClient = createServiceClient();
+  await serviceClient.storage.from('minutes-pdf').upload(pdfPath, pdfBuffer, {
     contentType: 'application/pdf',
     upsert: true,
   });

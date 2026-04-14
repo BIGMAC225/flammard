@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../../lib/supabase-server';
+import { createSupabaseServerClient, createServiceClient } from '../../../../lib/supabase-server';
 
 export const GET: APIRoute = async ({ params, request, cookies }) => {
   const supabase = createSupabaseServerClient(request, cookies);
@@ -33,7 +33,8 @@ export const GET: APIRoute = async ({ params, request, cookies }) => {
     return new Response('PDF not found', { status: 404 });
   }
 
-  const { data: fileData, error } = await supabase.storage
+  const serviceClient = createServiceClient();
+  const { data: fileData, error } = await serviceClient.storage
     .from('minutes-pdf')
     .download(minutes.pdf_path);
 
