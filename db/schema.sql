@@ -66,13 +66,28 @@ create table if not exists approvals (
 );
 
 -- ── EOS ───────────────────────────────────────────────────────────────────
+-- Planning periods for the roadmap. Teams don't use calendar quarters, so a
+-- period is any date range with a name ("Aug–Nov 2026").
+create table if not exists periods (
+  id          uuid primary key default gen_random_uuid(),
+  team        text not null default 'leadership' check (team in ('leadership', 'management')),
+  name        text not null,
+  start_date  date not null,
+  end_date    date not null,
+  created_at  timestamptz not null default now(),
+  unique (team, name),
+  check (end_date >= start_date)
+);
+
 create table if not exists rocks (
   id          uuid primary key default gen_random_uuid(),
   team        text not null default 'leadership' check (team in ('leadership', 'management')),
+  period_id   uuid references periods(id) on delete set null,
   title       text not null,
   owner       text,
+  -- 'planned' = on the roadmap, its period hasn't started
   status      text not null default 'on_track'
-                check (status in ('on_track', 'off_track', 'complete', 'dropped')),
+                check (status in ('planned', 'on_track', 'off_track', 'complete', 'dropped')),
   quarter     text,
   due_date    date,
   notes       text,
@@ -206,6 +221,9 @@ create index if not exists steps_parent_idx on steps(parent_type, parent_id);
 
 -- ── Upgrades for databases created by an earlier version of this file ─────
 -- (create table if not exists doesn't add columns to existing tables)
+alter table rocks add column if not exists period_id uuid references periods(id) on delete set null;
+alter table rocks drop constraint if exists rocks_status_check;
+alter table rocks add constraint rocks_status_check check (status in ('planned', 'on_track', 'off_track', 'complete', 'dropped'));
 alter table meeting_rocks add column if not exists source text not null default 'manual' check (source in ('manual', 'analysis'));
 alter table todos         add column if not exists source text not null default 'manual' check (source in ('manual', 'analysis'));
 alter table issues        add column if not exists source text not null default 'manual' check (source in ('manual', 'analysis'));
@@ -219,6 +237,8 @@ alter table taxdome_imports   add column if not exists team text not null defaul
 create index if not exists meetings_date_idx        on meetings(date desc);
 create index if not exists meetings_team_idx        on meetings(team);
 create index if not exists rocks_team_idx           on rocks(team);
+create index if not exists rocks_period_idx         on rocks(period_id);
+create index if not exists periods_team_idx         on periods(team, start_date);
 create index if not exists scorecard_metrics_team_idx on scorecard_metrics(team);
 create index if not exists meeting_rocks_meeting_idx on meeting_rocks(meeting_id);
 create index if not exists todos_meeting_idx        on todos(meeting_id);

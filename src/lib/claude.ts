@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { env } from './env';
-import type { MeetingAnalysis, ProposedStep, ScorecardExtraction, ScorecardMetric } from '../types';
+import type { MeetingAnalysis, ProposedRoadmap, ProposedStep, ScorecardExtraction, ScorecardMetric } from '../types';
 
 const MODEL = 'claude-opus-5';
 
@@ -197,6 +197,80 @@ export async function breakDownItem(
   return parsed.steps
     .map((s) => ({ title: s.title.trim(), substeps: s.substeps.map((x) => x.trim()).filter(Boolean) }))
     .filter((s) => s.title);
+}
+
+// ── Multi-year plan (pasted or from a deck) → periods, rocks, steps ───────
+
+const ProposedRockSchema = z.object({
+  title: z.string(),
+  owner: z.string().nullable(),
+  notes: z.string().nullable(),
+  steps: z.array(z.object({ title: z.string(), substeps: z.array(z.string()) })),
+});
+
+const RoadmapSchema = z.object({
+  periods: z.array(
+    z.object({
+      name: z.string(),
+      start_date: z.string(),
+      end_date: z.string(),
+      rocks: z.array(ProposedRockSchema),
+    })
+  ),
+  unplaced: z.array(ProposedRockSchema),
+});
+
+export async function extractRoadmap(
+  planText: string,
+  context: { team: string; existingPeriods: Array<{ name: string; start_date: string; end_date: string }>; today: string }
+): Promise<ProposedRoadmap> {
+  const system = `You turn a CPA firm's multi-year plan into an EOS roadmap: planning periods, the 2–3 rocks (big goals) committed to in each period, and the milestones under each rock. The firm plans in custom periods rather than calendar quarters (for example Aug–Nov). Keep the team's own wording for names and titles; don't invent rocks or milestones that aren't in the plan.`;
+
+  const existing = context.existingPeriods.length
+    ? `Periods already defined (reuse these names and dates when the plan refers to the same span):\n${context.existingPeriods
+        .map((p) => `- ${p.name}: ${p.start_date} → ${p.end_date}`)
+        .join('\n')}\n\n`
+    : '';
+
+  const user = `Team: ${context.team}
+Today: ${context.today}
+
+${existing}How to fill it in:
+- periods: every planning period the plan lays out, in order. name as the plan calls it (e.g. "Aug–Nov 2026"); start_date/end_date as YYYY-MM-DD covering the whole span (first day of the first month to last day of the last month). Work out the year from the plan's own headings; if a period only gives months, place it in the year that keeps the sequence moving forward from the first dated one.
+- rocks: the big goals for that period, with owner when named and notes for any detail that isn't a step.
+- steps: the milestones/tasks listed under a rock, in order; put finer bullets under a milestone as substeps.
+- unplaced: rocks the plan mentions without tying them to a period.
+
+--- PLAN ---
+${planText}
+--- END ---`;
+
+  const response = await client().messages.parse({
+    model: MODEL,
+    max_tokens: 16000,
+    output_config: { effort: 'medium', format: zodOutputFormat(RoadmapSchema) },
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  if (response.stop_reason === 'refusal') throw new Error('The import was declined by the model');
+  const parsed = response.parsed_output;
+  if (!parsed) throw new Error('Could not parse the plan');
+
+  const clean = (r: z.infer<typeof ProposedRockSchema>) => ({
+    title: r.title.trim(),
+    owner: r.owner?.trim() || null,
+    notes: r.notes?.trim() || null,
+    steps: r.steps
+      .map((s) => ({ title: s.title.trim(), substeps: s.substeps.map((x) => x.trim()).filter(Boolean) }))
+      .filter((s) => s.title),
+  });
+  return {
+    periods: parsed.periods
+      .map((p) => ({ ...p, name: p.name.trim(), rocks: p.rocks.map(clean).filter((r) => r.title) }))
+      .filter((p) => p.name),
+    unplaced: parsed.unplaced.map(clean).filter((r) => r.title),
+  };
 }
 
 // ── TaxDome report → scorecard values ─────────────────────────────────────

@@ -32,6 +32,12 @@ Notes:
 - **Check this on the first real meeting.** If analyses consistently fail while a shorter transcript works, Netlify is ending the function early; the fix is either raising the function timeout (Netlify support, paid plans) or moving the analysis to a Netlify Background Function — say so and it can be done.
 - Re-running the analysis after accepting and accepting again *replaces* the headlines, rock reviews, to-dos and issues that the earlier acceptance added to this meeting, so nothing is duplicated. Status changes made to older to-dos/issues are not reverted.
 
+## Roadmap
+
+**Roadmap** lays out the multi-year plan for the active team: **periods** (any date range with a name — teams here plan in spans like *Aug–Nov 2026*, not calendar quarters), the 2–3 **rocks** in each, and each rock's **steps** with progress. The current period is highlighted; past ones are dimmed; future rocks are *Planned* and only become *On track* when their period starts (or when a meeting reviews them). Analysis and the L10 context only look at on-track / off-track rocks, so planned ones don't clutter meetings.
+
+**Import a plan** takes the deck or document the plan lives in (`.pptx`, `.docx`, `.txt`, `.md`, `.csv`) or pasted text. Claude lays it out as periods → rocks → steps; you untick anything wrong and add it. Periods that already exist (same name) are reused, so importing an updated deck adds rather than duplicates periods — it will, however, add rocks again if they're in the file, so untick ones you already have.
+
 ## Breaking items down
 
 Every open to-do, issue and rock on its list page has a **Steps** section (click "Break it down"). Add steps and sub-steps by hand, tick them off, or pick a level of detail and click **Break down with AI** — Claude proposes steps (with sub-steps at the normal and detailed levels), you untick anything you don't want, and they're added. "Suggest more" on an item that already has steps avoids repeating them. Ticking a step ticks its sub-steps.

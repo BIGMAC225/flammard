@@ -6,7 +6,7 @@ export type DecisionOutcome = 'approved' | 'rejected' | 'deferred' | 'noted';
 
 export type ActionStatus = 'open' | 'completed' | 'overdue';
 
-export type RockStatus = 'on_track' | 'off_track' | 'complete' | 'dropped';
+export type RockStatus = 'planned' | 'on_track' | 'off_track' | 'complete' | 'dropped';
 
 export type TodoStatus = 'open' | 'done' | 'not_done' | 'dropped';
 
@@ -94,9 +94,19 @@ export interface Approval {
 
 // ── EOS Types ──────────────────────────────────────────────────────────────
 
+export interface Period {
+  id: string;
+  team: TeamId;
+  name: string;
+  start_date: string;
+  end_date: string;
+  created_at: string;
+}
+
 export interface Rock {
   id: string;
   team: TeamId;
+  period_id: string | null;
   title: string;
   owner: string | null;
   status: RockStatus;
@@ -193,6 +203,17 @@ export interface Step {
   source: 'manual' | 'ai';
   created_at: string;
   updated_at: string;
+}
+
+/** What the roadmap importer proposes from a pasted/uploaded plan. */
+export interface ProposedRoadmap {
+  periods: Array<{
+    name: string;
+    start_date: string;
+    end_date: string;
+    rocks: Array<{ title: string; owner: string | null; notes: string | null; steps: ProposedStep[] }>;
+  }>;
+  unplaced: Array<{ title: string; owner: string | null; notes: string | null; steps: ProposedStep[] }>;
 }
 
 /** What the AI breakdown proposes, before anything is saved. */

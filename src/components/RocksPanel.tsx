@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import type { MeetingRock, RockStatus } from '../types';
 
+// A rock reviewed in a meeting is never merely "planned"
+type ReviewStatus = Exclude<RockStatus, 'planned'>;
+
 interface RocksPanelProps {
   meetingId: string;
   initialRocks: MeetingRock[];
 }
 
-const STATUS_LABELS: Record<RockStatus, string> = {
+const STATUS_LABELS: Record<ReviewStatus, string> = {
   on_track: 'On Track',
   off_track: 'Off Track',
   complete: 'Complete',
   dropped: 'Dropped',
 };
 
-const STATUS_COLORS: Record<RockStatus, string> = {
+const STATUS_COLORS: Record<ReviewStatus, string> = {
   on_track: 'bg-state-success/15 text-state-success border-state-success/20',
   off_track: 'bg-state-danger/15 text-state-danger border-state-danger/20',
   complete: 'bg-accent/15 text-accent border-accent/20',
@@ -77,7 +80,7 @@ export default function RocksPanel({ meetingId, initialRocks }: RocksPanelProps)
           <select
             value={rock.status}
             onChange={(e) => updateStatus(rock, e.target.value as RockStatus)}
-            className={`text-xs px-2.5 py-1 rounded-full border font-medium cursor-pointer bg-transparent ${STATUS_COLORS[rock.status]}`}
+            className={`text-xs px-2.5 py-1 rounded-full border font-medium cursor-pointer bg-transparent ${STATUS_COLORS[rock.status as ReviewStatus] ?? STATUS_COLORS.on_track}`}
           >
             {Object.entries(STATUS_LABELS).map(([v, l]) => (
               <option key={v} value={v}>{l}</option>

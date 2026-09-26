@@ -45,6 +45,7 @@ export interface PDFInput {
 }
 
 const TRACK_COLORS: Record<string, [number, number, number]> = {
+  planned: [160, 160, 175],
   on_track: [34, 197, 94],
   off_track: [239, 68, 68],
   complete: [123, 108, 246],
