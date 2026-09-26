@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { getMeeting, json, notFound, readBody, requireAuth } from '../../../../lib/api';
 import { sql } from '../../../../lib/db';
+import { nameKey, resolveOwnerNames } from '../../../../lib/people';
 import type { MeetingAnalysis } from '../../../../types';
 
 // Writes the reviewed (checkbox-filtered) analysis into the real tables in
@@ -42,15 +43,29 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const team = meeting.team;
   const db = sql();
 
+  // AI owner and presenter names → people (one query). A matched name gets
+  // the person's id and canonical name; anything else stays as text.
+  const people = await resolveOwnerNames(
+    [...a.rocks.map((r) => r.owner), ...a.todos_new.map((t) => t.owner), ...a.headlines.map((h) => h.presenter)].filter(
+      (n): n is string => typeof n === 'string'
+    )
+  );
+  const who = (name: unknown): { owner: string | null; owner_id: string | null } => {
+    const text = typeof name === 'string' ? name.trim() : '';
+    if (!text) return { owner: null, owner_id: null };
+    const hit = people.get(nameKey(text));
+    return hit ? { owner: hit.name, owner_id: hit.id } : { owner: text, owner_id: null };
+  };
+
   const queries = [
     // ── Refuse inside the transaction too (an approval could land between
     //    the check above and here): division by zero aborts the whole batch
     db`select 1 / (case when status in ('approved', 'distributed') then 0 else 1 end) from meetings where id = ${id}`,
 
     // ── Undo the previous commit of this meeting ────────────────────────
-    db`update todos set status = 'open', resolved_meeting_id = null, updated_at = now()
+    db`update todos set status = 'open', resolved_meeting_id = null, completed_at = null, updated_at = now()
        where resolved_meeting_id = ${id} and meeting_id is distinct from ${id}`,
-    db`update issues set status = 'open', resolution = null, resolved_in_meeting_id = null, updated_at = now()
+    db`update issues set status = 'open', resolution = null, resolved_in_meeting_id = null, solved_at = null, updated_at = now()
        where resolved_in_meeting_id = ${id} and meeting_id is distinct from ${id}`,
     db`delete from steps where parent_type = 'todo' and parent_id in (select id from todos where meeting_id = ${id} and source = 'analysis')`,
     db`delete from steps where parent_type = 'issue' and parent_id in (select id from issues where meeting_id = ${id} and source = 'analysis')`,
@@ -68,36 +83,45 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
        where minutes.sealed_at is null`,
 
     // ── Headlines ───────────────────────────────────────────────────────
-    ...a.headlines.map(
-      (h) => db`insert into headlines (meeting_id, type, text, presenter, source) values (${id}, ${h.type}, ${h.text}, ${h.presenter}, 'analysis')`
-    ),
+    ...a.headlines.map((h) => {
+      const p = who(h.presenter);
+      return db`insert into headlines (meeting_id, team, type, text, presenter, presenter_id, source)
+                values (${id}, ${team}, ${h.type}, ${h.text}, ${p.owner}, ${p.owner_id}, 'analysis')`;
+    }),
 
     // ── Rocks: update the team's master rock (or create it), then snapshot
-    ...a.rocks.map(
-      (r) => db`
+    ...a.rocks.map((r) => {
+      // A named owner replaces both columns; no name keeps the rock's owner
+      const o = who(r.owner);
+      return db`
         with found as (
           select id from rocks where team = ${team} and lower(title) = lower(${r.title}) limit 1
         ), updated as (
-          update rocks set status = ${r.status}, owner = coalesce(${r.owner}, owner), updated_at = now()
+          update rocks set status = ${r.status}, owner = coalesce(${o.owner}::text, owner),
+            owner_id = case when ${o.owner}::text is null then owner_id else ${o.owner_id}::uuid end, updated_at = now()
           where id in (select id from found) returning id
         ), created as (
-          insert into rocks (team, title, owner, status, notes)
-          select ${team}, ${r.title}, ${r.owner}, ${r.status}, ${r.notes}
+          insert into rocks (team, title, owner, owner_id, status, notes)
+          select ${team}, ${r.title}, ${o.owner}, ${o.owner_id}::uuid, ${r.status}, ${r.notes}
           where not exists (select 1 from found) returning id
         )
-        insert into meeting_rocks (meeting_id, rock_id, title, owner, status, notes, source)
-        values (${id}, coalesce((select id from updated), (select id from created)), ${r.title}, ${r.owner}, ${r.status}, ${r.notes}, 'analysis')`
-    ),
+        insert into meeting_rocks (meeting_id, rock_id, title, owner, owner_id, status, notes, source)
+        values (${id}, coalesce((select id from updated), (select id from created)), ${r.title}, ${o.owner}, ${o.owner_id}::uuid,
+                ${r.status}, ${r.notes}, 'analysis')`;
+    }),
 
     // ── To-dos ──────────────────────────────────────────────────────────
-    ...a.todos_new.map(
-      (t) => db`insert into todos (meeting_id, team, title, owner, status, source) values (${id}, ${team}, ${t.title}, ${t.owner}, 'open', 'analysis')`
-    ),
+    ...a.todos_new.map((t) => {
+      const o = who(t.owner);
+      return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source)
+                values (${id}, ${team}, ${t.title}, ${o.owner}, ${o.owner_id}, 'open', 'analysis')`;
+    }),
     ...a.todos_reviewed
       .filter((t) => t.status !== 'open')
       .map(
         (t) => db`
-          update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now()
+          update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now(),
+            completed_at = case when ${t.status}::text = 'done' then now() else null end
           where id = (
             select id from todos
             where team = ${team} and meeting_id is distinct from ${id} and status = 'open' and lower(title) = lower(${t.title}) limit 1
@@ -114,14 +138,14 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     ...a.issues_solved.map(
       (i) => db`
         with solved as (
-          update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, updated_at = now()
+          update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, solved_at = now(), updated_at = now()
           where id = (
             select id from issues
             where team = ${team} and meeting_id is distinct from ${id} and status = 'open' and lower(title) = lower(${i.title}) limit 1
           ) returning id
         )
-        insert into issues (meeting_id, team, title, resolution, status, resolved_in_meeting_id, priority, source)
-        select ${id}, ${team}, ${i.title}, ${i.resolution}, 'solved', ${id}, 'medium', 'analysis'
+        insert into issues (meeting_id, team, title, resolution, status, resolved_in_meeting_id, solved_at, priority, source)
+        select ${id}, ${team}, ${i.title}, ${i.resolution}, 'solved', ${id}, now(), 'medium', 'analysis'
         where not exists (select 1 from solved)`
     ),
 

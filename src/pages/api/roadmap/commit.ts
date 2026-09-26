@@ -4,6 +4,7 @@ import type { NeonQueryPromise } from '@neondatabase/serverless';
 import { json, readBody, requireAuth } from '../../../lib/api';
 import { isIsoDate, todayLocal } from '../../../lib/dates';
 import { many, one, sql } from '../../../lib/db';
+import { nameKey, resolveOwnerNames } from '../../../lib/people';
 import { currentTeam } from '../../../lib/teams';
 import type { ProposedRoadmap } from '../../../types';
 
@@ -31,6 +32,18 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   const today = todayLocal();
 
   const queries: NeonQueryPromise<false, false, Record<string, any>[]>[] = [];
+
+  // Rock owner names → people (one query); unmatched names stay as text
+  const allRocks = [...periods.flatMap((p) => (Array.isArray(p.rocks) ? p.rocks : [])), ...unplaced];
+  const people = await resolveOwnerNames(
+    allRocks.map((r) => r?.owner).filter((n): n is string => typeof n === 'string')
+  );
+  const who = (name: unknown): { owner: string | null; owner_id: string | null } => {
+    const text = typeof name === 'string' ? name.trim() : '';
+    if (!text) return { owner: null, owner_id: null };
+    const hit = people.get(nameKey(text));
+    return hit ? { owner: hit.name, owner_id: hit.id } : { owner: text, owner_id: null };
+  };
 
   // ── Periods: existing by name, new ones join the batch ───────────────────
   const existingPeriods = await many<{ id: string; name: string; start_date: string; end_date: string }>(
@@ -62,11 +75,14 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     if (rockByKey.has(rockKey(periodId, title))) return;
     // Same title with no period yet: this import places it
     const unplacedId = periodId ? rockByKey.get(rockKey(null, title)) : undefined;
+    const o = who(r.owner);
     if (unplacedId) {
+      // The owner is filled only when the rock has none yet (text and id together)
       queries.push(db`
         update rocks set period_id = ${periodId},
           status = case when status = 'planned' then ${status} else status end,
-          owner = coalesce(owner, ${r.owner?.trim() || null}), notes = coalesce(notes, ${r.notes?.trim() || null}),
+          owner_id = case when owner is null then ${o.owner_id}::uuid else owner_id end,
+          owner = coalesce(owner, ${o.owner}::text), notes = coalesce(notes, ${r.notes?.trim() || null}),
           updated_at = now()
         where id = ${unplacedId}`);
       rockByKey.delete(rockKey(null, title));
@@ -77,8 +93,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     const rockId = randomUUID();
     rockByKey.set(rockKey(periodId, title), rockId);
     queries.push(db`
-      insert into rocks (id, team, period_id, title, owner, notes, status)
-      values (${rockId}, ${team}, ${periodId}, ${title}, ${r.owner?.trim() || null}, ${r.notes?.trim() || null}, ${status})`);
+      insert into rocks (id, team, period_id, title, owner, owner_id, notes, status)
+      values (${rockId}, ${team}, ${periodId}, ${title}, ${o.owner}, ${o.owner_id}, ${r.notes?.trim() || null}, ${status})`);
     rocksCreated++;
 
     const steps = (Array.isArray(r.steps) ? r.steps : []).filter((s) => typeof s?.title === 'string' && s.title.trim()).slice(0, 50);

@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
-import { json, requireAuth } from '../../../lib/api';
+import { json, readBody, requireAuth } from '../../../lib/api';
 import { one, sql } from '../../../lib/db';
+import { resolveOwner } from '../../../lib/people';
 import { currentTeam } from '../../../lib/teams';
 
 const FREQUENCIES = ['weekly', 'monthly', 'quarterly'];
@@ -9,16 +10,19 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const body = await request.json();
-  const title = (body.title ?? '').trim();
+  const body = await readBody(request);
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const title = str(body.title);
   if (!title) return json({ error: 'Title required' }, 400);
+  const owner = await resolveOwner(body);
+  if ('error' in owner) return json({ error: owner.error }, 400);
 
   const team = currentTeam(cookies);
   const metric = await one(sql()`
-    insert into scorecard_metrics (team, title, owner, goal, unit, description, frequency, sort_order)
+    insert into scorecard_metrics (team, title, owner, owner_id, goal, unit, description, frequency, sort_order)
     values (
-      ${team}, ${title}, ${body.owner?.trim() || null}, ${body.goal?.trim() || null}, ${body.unit?.trim() || null},
-      ${body.description?.trim() || null}, ${FREQUENCIES.includes(body.frequency) ? body.frequency : 'weekly'},
+      ${team}, ${title}, ${owner.owner}, ${owner.owner_id}, ${str(body.goal)}, ${str(body.unit)},
+      ${str(body.description)}, ${FREQUENCIES.includes(body.frequency) ? body.frequency : 'weekly'},
       (select count(*) from scorecard_metrics where team = ${team})
     )
     returning *
