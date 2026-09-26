@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { readStreamedJSON } from '../lib/stream-json';
-import { bridgeUrl, detectBridge, setBridgeUrl, transcribeWithBridge, type BridgeInfo } from '../lib/vibe-bridge';
+import {
+  bridgeEnabled,
+  bridgeUrl,
+  detectBridge,
+  setBridgeEnabled,
+  setBridgeUrl,
+  transcribeWithBridge,
+  type BridgeInfo,
+} from '../lib/vibe-bridge';
 import AnalysisReview from './AnalysisReview';
 import type { AnalysisStatus, MeetingAnalysis } from '../types';
 
@@ -54,6 +62,7 @@ export default function MeetingSession(props: Props) {
   const [bridgeSettings, setBridgeSettings] = useState(false);
   const [bridgeUrlInput, setBridgeUrlInput] = useState('');
   const [transcribing, setTranscribing] = useState<{ stage: string; pct: number | null } | null>(null);
+  const transcribeAbort = useRef<AbortController | null>(null);
 
   const [pasteMode, setPasteMode] = useState(false);
   const [pasted, setPasted] = useState('');
@@ -78,13 +87,20 @@ export default function MeetingSession(props: Props) {
     []
   );
 
-  // Look for the bridge once on load; the button only shows when it answers
+  // Look for the bridge on load — but only once this browser has opted in
+  // (via "Set it up → Check"), so ordinary visitors never get a browser
+  // prompt about local-network access.
   useEffect(() => {
     setBridgeUrlInput(bridgeUrl());
+    if (!bridgeEnabled()) {
+      setBridgeChecked(true);
+      return;
+    }
     void detectBridge().then((info) => {
       setBridge(info);
       setBridgeChecked(true);
     });
+    return () => transcribeAbort.current?.abort();
   }, []);
 
   // Don't let a tab close silently throw away an hour of audio
@@ -238,6 +254,7 @@ export default function MeetingSession(props: Props) {
     const info = await detectBridge(3000);
     setBridge(info);
     setBridgeChecked(true);
+    setBridgeEnabled(!!info);
     if (!info) setError(`Nothing answered at ${bridgeUrl()}. Is the bridge running on this computer?`);
     else setError('');
   };
@@ -245,14 +262,21 @@ export default function MeetingSession(props: Props) {
   const transcribeLocally = async () => {
     setError('');
     setTranscribing({ stage: 'Fetching audio', pct: 0 });
+    const abort = new AbortController();
+    transcribeAbort.current = abort;
     try {
-      const info = (await detectBridge(3000)) ?? bridge;
+      const info = await detectBridge(3000);
       if (!info) throw new Error('The Vibe bridge is not running on this computer');
       if (!info.ok) throw new Error(info.error ?? 'Vibe is not ready');
+      setBridge(info);
       const audio = await fetchRecordingBlob((pct) => setTranscribing({ stage: 'Fetching audio', pct }));
       setTranscribing({ stage: 'Transcribing in Vibe', pct: 0 });
-      const text = await transcribeWithBridge(audio, info, (pct, segments) =>
-        setTranscribing((t) => ({ stage: `Transcribing in Vibe · ${segments} segments`, pct: pct >= 0 ? pct : (t?.pct ?? 0) }))
+      const text = await transcribeWithBridge(
+        audio,
+        info,
+        (pct, segments) =>
+          setTranscribing((t) => ({ stage: `Transcribing in Vibe · ${segments} segments`, pct: pct >= 0 ? pct : (t?.pct ?? 0) })),
+        abort.signal
       );
       setTranscribing({ stage: 'Saving transcript', pct: 100 });
       const res = await fetch(`/api/meetings/${meetingId}/transcript`, {
@@ -267,8 +291,9 @@ export default function MeetingSession(props: Props) {
       setAnalysis(null);
       setAnalysisStatus('none');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Transcription failed');
+      if (!abort.signal.aborted) setError(err instanceof Error ? err.message : 'Transcription failed');
     } finally {
+      transcribeAbort.current = null;
       setTranscribing(null);
     }
   };
@@ -467,7 +492,7 @@ export default function MeetingSession(props: Props) {
               {hasTranscript ? 'Transcribe again with Vibe' : 'Transcribe with Vibe on this computer'}
             </button>
             <span className="text-xs text-ink-muted">
-              {bridge.model}{bridge.diarizeModel ? ' · speaker labels on' : ''}
+              {bridge.model}{bridge.speakerLabels ? ' · speaker labels on' : ''}
             </span>
           </div>
         )}
@@ -485,6 +510,9 @@ export default function MeetingSession(props: Props) {
               <div className="h-full bg-accent transition-all" style={{ width: `${transcribing.pct ?? 0}%` }} />
             </div>
             <p className="text-xs text-ink-muted mt-2">Runs on this computer's GPU — a full L10 takes a few minutes. Keep the tab open.</p>
+            <button onClick={() => transcribeAbort.current?.abort()} className="text-xs text-ink-muted hover:text-state-danger mt-1 underline underline-offset-2">
+              Cancel
+            </button>
           </div>
         )}
 

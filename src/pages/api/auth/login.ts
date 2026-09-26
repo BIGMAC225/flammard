@@ -21,9 +21,18 @@ interface Failures {
 }
 
 // IPv6 clients get a whole /64, so count by prefix; IPv4 by address
+function ipv6Prefix(ip: string): string {
+  // expand "::" so the first four hextets are really the /64
+  const [head, tail = ''] = ip.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  return groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':');
+}
+
 function clientKey(request: Request, fallback: string | undefined): string {
   const ip = request.headers.get('x-nf-client-connection-ip') ?? fallback ?? 'unknown';
-  const key = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;
+  const key = ip.includes(':') ? ipv6Prefix(ip) : ip;
   return `login-attempts/${key.replace(/[^0-9a-f.:]/gi, '_')}`;
 }
 
@@ -40,6 +49,7 @@ async function reserveAttempt(key: string): Promise<number | null> {
       const prev = (current?.data as Failures | null) ?? null;
       const fresh = !prev || now - prev.first > WINDOW_MS;
       const next: Failures = fresh ? { count: 1, first: now } : { count: prev.count + 1, first: prev.first };
+      if (current && !current.etag) continue; // no etag → the write couldn't be conditional; re-read
       const result = current
         ? await store.setJSON(key, next, { onlyIfMatch: current.etag })
         : await store.setJSON(key, next, { onlyIfNew: true });

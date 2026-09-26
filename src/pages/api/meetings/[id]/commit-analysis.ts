@@ -43,6 +43,10 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const db = sql();
 
   const queries = [
+    // ── Refuse inside the transaction too (an approval could land between
+    //    the check above and here): division by zero aborts the whole batch
+    db`select 1 / (case when status in ('approved', 'distributed') then 0 else 1 end) from meetings where id = ${id}`,
+
     // ── Undo the previous commit of this meeting ────────────────────────
     db`update todos set status = 'open', resolved_meeting_id = null, updated_at = now()
        where resolved_meeting_id = ${id} and meeting_id <> ${id}`,
@@ -110,7 +114,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
           update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, updated_at = now()
           where id = (
             select i.id from issues i join meetings m on m.id = i.meeting_id
-            where m.team = ${team} and i.status = 'open' and lower(i.title) = lower(${i.title}) limit 1
+            where m.team = ${team} and i.meeting_id <> ${id} and i.status = 'open' and lower(i.title) = lower(${i.title}) limit 1
           ) returning id
         )
         insert into issues (meeting_id, title, resolution, status, resolved_in_meeting_id, priority, source)
@@ -124,13 +128,17 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
            analysis = ${JSON.stringify(a)}::jsonb, analysis_status = 'committed',
            status = case when status = 'draft' then 'minutes_draft' else status end,
            updated_at = now()
-       where id = ${id}`,
+       where id = ${id} and status not in ('approved', 'distributed')`,
   ];
 
   try {
     await db.transaction(queries);
   } catch (err) {
-    return json({ error: `Could not save: ${err instanceof Error ? err.message : 'unknown error'}` }, 500);
+    const message = err instanceof Error ? err.message : 'unknown error';
+    if (/division by zero/.test(message)) {
+      return json({ error: 'This meeting was approved while you were reviewing; its record can no longer be changed' }, 409);
+    }
+    return json({ error: `Could not save: ${message}` }, 500);
   }
 
   return json({ ok: true });

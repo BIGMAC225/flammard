@@ -186,6 +186,17 @@ create table if not exists taxdome_imports (
   entries_written  integer not null default 0
 );
 
+-- ── Upgrades for databases created by an earlier version of this file ─────
+-- (create table if not exists doesn't add columns to existing tables)
+alter table meeting_rocks add column if not exists source text not null default 'manual' check (source in ('manual', 'analysis'));
+alter table todos         add column if not exists source text not null default 'manual' check (source in ('manual', 'analysis'));
+alter table issues        add column if not exists source text not null default 'manual' check (source in ('manual', 'analysis'));
+alter table headlines     add column if not exists source text not null default 'manual' check (source in ('manual', 'analysis'));
+alter table meetings          add column if not exists team text not null default 'leadership' check (team in ('leadership', 'management'));
+alter table rocks             add column if not exists team text not null default 'leadership' check (team in ('leadership', 'management'));
+alter table scorecard_metrics add column if not exists team text not null default 'leadership' check (team in ('leadership', 'management'));
+alter table taxdome_imports   add column if not exists team text not null default 'leadership' check (team in ('leadership', 'management'));
+
 -- ── Indexes ───────────────────────────────────────────────────────────────
 create index if not exists meetings_date_idx        on meetings(date desc);
 create index if not exists meetings_team_idx        on meetings(team);

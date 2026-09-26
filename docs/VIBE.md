@@ -15,14 +15,14 @@ With the bridge running, step 2 of a meeting's Session tab shows **Transcribe wi
    node bridge/vibe-bridge.mjs --origin https://<your-site>.netlify.app
    ```
 
-   It prints the Vibe URL it found and the model. Leave the window open during meetings. (`--origin` restricts which site may use this computer; omit it to allow any.)
+   It prints the Vibe URL it found and the model. Leave the window open during meetings. `--origin` is required: it names the one site allowed to use this computer (add `--dev` to also allow a local dev server).
 
-Reload the meeting page — the Vibe button appears in step 2.
+5. On the meeting page, in step 2, click **Set it up → Check** once. That tells this browser to look for the bridge on future visits (browsers otherwise ask every visitor about local-network access). The Vibe button then appears whenever the bridge is running.
 
 ## How it works
 
 - Vibe writes its current server URL into its config file (`app_config.json` → `api.baseUrl`) while the API toggle is on. The bridge reads that, health-checks it, and loads the model from `model.path` if none is loaded. If Vibe restarts on a new port, the bridge re-discovers it on the next request.
-- The bridge listens on `http://127.0.0.1:47111` (change with `--port`). `GET /info` reports status; anything under `/v1/` is proxied to Vibe unchanged, with CORS and Chrome's private-network preflight handled.
+- The bridge listens on `http://127.0.0.1:47111` (change with `--port`). `GET /info` re-checks Vibe every time (it unloads its model after a few idle minutes and may restart on a new port) and reloads the model if needed; `POST /v1/audio/transcriptions` is the only endpoint proxied, with CORS and Chrome's private-network preflight handled. Closing the tab cancels the transcription in Vibe.
 - The page sends the audio as multipart with `stream=true`, reads Vibe's NDJSON stream (progress, segments, result), and turns the segments into text — `Speaker N:` prefixes when diarization is on.
 
 ## Limits and notes
@@ -30,7 +30,7 @@ Reload the meeting page — the Vibe button appears in step 2.
 - Browsers only allow an https page to reach `127.0.0.1` as a "potentially trustworthy" origin. Chrome, Edge and Firefox do; Safari may block it. Use Chrome for meetings if in doubt.
 - Vibe handles one transcription at a time; a second request gets "busy" (429). Wait for the first to finish.
 - The audio never leaves your network for transcription — only the resulting text goes to Flammard (and then to Claude for analysis).
-- To restrict use to your site, keep `--origin`. There is no password on the bridge; it can only transcribe.
+- Only the site named in `--origin` can use the bridge, and it can only transcribe. There is no password.
 - The bridge can also be pointed at a standalone `vibe-server` (`--vibe http://127.0.0.1:PORT --model /path/to/ggml-model.bin`) if you'd rather not run the desktop app.
 
 ## Without the bridge
