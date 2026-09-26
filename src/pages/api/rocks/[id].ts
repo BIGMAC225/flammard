@@ -2,8 +2,10 @@ import type { APIRoute } from 'astro';
 import { isUuid, json, readBody, requireAuth, requireEnum, requireUuid } from '../../../lib/api';
 import { buildUpdate, one, sql } from '../../../lib/db';
 import { isIsoDate } from '../../../lib/dates';
+import { resolveOwner } from '../../../lib/people';
 
 const STATUSES = ['planned', 'on_track', 'off_track', 'complete', 'dropped'];
+const LEVELS = ['company', 'individual'];
 
 export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies) ?? requireUuid(params.id);
@@ -22,13 +24,26 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
     if (!period) return json({ error: 'Period not found' }, 404);
     if (period.team !== rock.team) return json({ error: 'That period belongs to the other team' }, 400);
   }
-  for (const k of ['title', 'owner', 'notes', 'quarter'] as const) {
+  if ('level' in body && body.level !== null && !LEVELS.includes(body.level)) return json({ error: 'Invalid level' }, 400);
+  for (const k of ['title', 'notes', 'quarter'] as const) {
     if (typeof body[k] === 'string') body[k] = body[k].trim() || null;
   }
+  // Owner: an id (or text from an old client, auto-matched) sets both columns
+  if ('owner' in body || 'owner_id' in body) {
+    const owner = await resolveOwner(body);
+    if ('error' in owner) return json({ error: owner.error }, 400);
+    Object.assign(body, owner);
+  }
 
-  const update = buildUpdate('rocks', params.id!, body, ['title', 'owner', 'notes', 'status', 'period_id', 'quarter', 'due_date'], {
-    updated_at: new Date(),
-  });
+  const update = buildUpdate(
+    'rocks',
+    params.id!,
+    body,
+    ['title', 'owner', 'owner_id', 'notes', 'status', 'period_id', 'quarter', 'due_date', 'level'],
+    {
+      updated_at: new Date(),
+    }
+  );
   if (!update) return json({ error: 'Nothing to update' }, 400);
   const [rock] = await sql().query(update.text, update.params);
   if (!rock) return json({ error: 'Not found' }, 404);

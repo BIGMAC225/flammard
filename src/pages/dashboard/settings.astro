@@ -1,0 +1,12 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import SettingsForm from '../../components/SettingsForm';
+import { getSettings, publicSettings } from '../../lib/settings';
+
+// settings.manage is enforced by the middleware route rules
+const settings = publicSettings(await getSettings());
+---
+
+<Dashboard eyebrow="Admin" title="Settings" description="Company details, the fiscal calendar and integrations.">
+  <SettingsForm initial={settings} client:load />
+</Dashboard>

@@ -1,0 +1,52 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import AccountForm from '../../components/AccountForm';
+import { one, sql } from '../../lib/db';
+import { ROLE_LABELS } from '../../lib/permissions';
+import { teamLabel } from '../../lib/teams';
+import { TIMEZONE } from '../../lib/dates';
+import type { Role, TeamId } from '../../types';
+
+// My account (account.self: people only, never the shared team login).
+const principal = Astro.locals.principal!;
+if (principal.kind !== 'person') return Astro.redirect('/dashboard');
+
+const me = await one<{
+  name: string;
+  email: string | null;
+  title: string | null;
+  role: Role;
+  teams: TeamId[];
+  last_login_at: Date | string | null;
+  password_updated_at: Date | string | null;
+}>(
+  sql()`select name, email, title, role, teams, last_login_at, password_updated_at
+        from people where id = ${principal.id}`
+);
+if (!me) return Astro.redirect('/login');
+
+const when = (v: Date | string | null) =>
+  v ? new Date(v).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: TIMEZONE }) : 'Never';
+
+const details = [
+  { label: 'Name', value: me.name },
+  { label: 'Email', value: me.email ?? '—' },
+  { label: 'Title', value: me.title || '—' },
+  { label: 'Role', value: ROLE_LABELS[me.role] ?? me.role },
+  { label: 'Teams', value: (me.teams ?? []).map(teamLabel).join(', ') || 'None' },
+  { label: 'Password last changed', value: when(me.password_updated_at) },
+];
+---
+
+<Dashboard eyebrow="Account" title="My account" description="Your details and your password. An admin changes your name, email, role or teams.">
+  <dl class="card grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3 mb-6">
+    {details.map((d) => (
+      <div class="min-w-0">
+        <dt class="eyebrow">{d.label}</dt>
+        <dd class="mt-1 text-sm text-ink-primary break-words">{d.value}</dd>
+      </div>
+    ))}
+  </dl>
+
+  <AccountForm email={me.email ?? ''} client:load />
+</Dashboard>

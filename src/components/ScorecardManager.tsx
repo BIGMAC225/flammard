@@ -1,10 +1,14 @@
 import { useState } from 'react';
-import type { ScorecardEntry, ScorecardMetric } from '../types';
+import OwnerPicker, { type OwnerValue } from './OwnerPicker';
+import type { PersonOption, ScorecardEntry, ScorecardMetric, TeamId } from '../types';
 
 interface Props {
   metrics: ScorecardMetric[];
   entries: ScorecardEntry[];
   periods: string[]; // newest first
+  team?: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people?: PersonOption[];
 }
 
 const FREQ_LABEL: Record<ScorecardMetric['frequency'], string> = {
@@ -13,11 +17,16 @@ const FREQ_LABEL: Record<ScorecardMetric['frequency'], string> = {
   quarterly: 'Quarterly',
 };
 
-const EMPTY_METRIC = { title: '', owner: '', goal: '', unit: '', frequency: 'weekly', description: '' };
+const EMPTY_METRIC = { title: '', goal: '', unit: '', frequency: 'weekly', description: '' };
+const UNASSIGNED: OwnerValue = { owner_id: null, owner: null };
 
-export default function ScorecardManager({ metrics, entries, periods }: Props) {
+export default function ScorecardManager({ metrics, entries, periods, team, people }: Props) {
   const [addingMetric, setAddingMetric] = useState(false);
   const [metricForm, setMetricForm] = useState(EMPTY_METRIC);
+  // Owner is sent only when set on a new metric or changed on an edit, so an
+  // unchanged legacy or inactive owner is left exactly as it is
+  const [metricOwner, setMetricOwner] = useState<OwnerValue>(UNASSIGNED);
+  const [ownerChanged, setOwnerChanged] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingEntry, setAddingEntry] = useState(false);
   const [entryForm, setEntryForm] = useState({
@@ -51,9 +60,10 @@ export default function ScorecardManager({ metrics, entries, periods }: Props) {
 
   const saveMetric = async () => {
     if (!metricForm.title.trim()) return;
+    const body = !editingId || ownerChanged ? { ...metricForm, owner_id: metricOwner.owner_id, owner: metricOwner.owner } : metricForm;
     const ok = editingId
-      ? await post(`/api/scorecard/metrics/${editingId}`, 'PATCH', metricForm)
-      : await post('/api/scorecard/metrics', 'POST', metricForm);
+      ? await post(`/api/scorecard/metrics/${editingId}`, 'PATCH', body)
+      : await post('/api/scorecard/metrics', 'POST', body);
     if (ok) window.location.reload();
   };
 
@@ -66,12 +76,13 @@ export default function ScorecardManager({ metrics, entries, periods }: Props) {
     setEditingId(m.id);
     setMetricForm({
       title: m.title,
-      owner: m.owner ?? '',
       goal: m.goal ?? '',
       unit: m.unit ?? '',
       frequency: m.frequency,
       description: m.description ?? '',
     });
+    setMetricOwner({ owner_id: m.owner_id, owner: m.owner });
+    setOwnerChanged(false);
     setAddingMetric(true);
   };
 
@@ -93,7 +104,16 @@ export default function ScorecardManager({ metrics, entries, periods }: Props) {
           value={metricForm.title}
           onChange={(e) => setMetricForm({ ...metricForm, title: e.target.value })}
         />
-        <input className="input text-sm" placeholder="Owner" value={metricForm.owner} onChange={(e) => setMetricForm({ ...metricForm, owner: e.target.value })} />
+        <OwnerPicker
+          value={metricOwner}
+          onChange={(v) => {
+            setMetricOwner(v);
+            setOwnerChanged(true);
+          }}
+          team={team}
+          initialPeople={people}
+          className="text-sm"
+        />
         <select className="input text-sm" value={metricForm.frequency} onChange={(e) => setMetricForm({ ...metricForm, frequency: e.target.value })}>
           {Object.entries(FREQ_LABEL).map(([v, l]) => (
             <option key={v} value={v}>{l}</option>
@@ -112,7 +132,16 @@ export default function ScorecardManager({ metrics, entries, periods }: Props) {
         <button onClick={saveMetric} disabled={saving} className="btn-primary text-sm">
           {saving ? 'Saving…' : editingId ? 'Save changes' : 'Add metric'}
         </button>
-        <button onClick={() => { setAddingMetric(false); setEditingId(null); setMetricForm(EMPTY_METRIC); }} className="btn-secondary text-sm">
+        <button
+          onClick={() => {
+            setAddingMetric(false);
+            setEditingId(null);
+            setMetricForm(EMPTY_METRIC);
+            setMetricOwner(UNASSIGNED);
+            setOwnerChanged(false);
+          }}
+          className="btn-secondary text-sm"
+        >
           Cancel
         </button>
       </div>

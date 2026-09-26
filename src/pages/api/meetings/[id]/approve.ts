@@ -1,8 +1,7 @@
 import type { APIRoute } from 'astro';
-import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { getMeeting, json, notFound, principal, requireAuth } from '../../../../lib/api';
 import { many, one, sql } from '../../../../lib/db';
 import { minutesPdf } from '../../../../lib/blobs';
-import { TEAM_LABEL } from '../../../../lib/auth';
 import { hashMinutes } from '../../../../lib/crypto';
 import { generateMinutesPDF } from '../../../../lib/pdf';
 import type { PDFScorecardRow } from '../../../../lib/pdf';
@@ -17,7 +16,7 @@ import type {
   Todo,
 } from '../../../../types';
 
-export const POST: APIRoute = async ({ params, cookies }) => {
+export const POST: APIRoute = async ({ params, cookies, locals }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
@@ -40,6 +39,8 @@ export const POST: APIRoute = async ({ params, cookies }) => {
   if (!minutes) return json({ error: 'No minutes to approve' }, 400);
 
   const approvedAt = new Date().toISOString();
+  // The signed-in person's name (TEAM_LABEL for the shared login)
+  const approvedBy = principal(locals).name;
 
   const hash = await hashMinutes({
     summary: minutes.summary,
@@ -79,7 +80,7 @@ export const POST: APIRoute = async ({ params, cookies }) => {
     actions: minutes.actions,
     discussion: minutes.discussion,
     hash,
-    approvedBy: TEAM_LABEL,
+    approvedBy,
     approvedAt,
     appName: import.meta.env.PUBLIC_APP_NAME || 'Flammard',
     eos: {
@@ -99,7 +100,7 @@ export const POST: APIRoute = async ({ params, cookies }) => {
   await db.transaction([
     db`update minutes set content_hash = ${hash}, sealed_at = ${approvedAt}, pdf_path = ${pdfPath}, updated_at = now()
        where id = ${minutes.id}`,
-    db`insert into approvals (minutes_id, approved_by, hash_at_approval) values (${minutes.id}, ${TEAM_LABEL}, ${hash})`,
+    db`insert into approvals (minutes_id, approved_by, hash_at_approval) values (${minutes.id}, ${approvedBy}, ${hash})`,
     db`update meetings set status = 'approved', updated_at = now() where id = ${id}`,
   ]);
 

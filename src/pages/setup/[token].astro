@@ -1,0 +1,72 @@
+---
+import Base from '../../layouts/Base.astro';
+import SetPasswordForm from '../../components/SetPasswordForm';
+import { BRAND } from '../../config/brand';
+import { one, sql } from '../../lib/db';
+import { hashToken } from '../../lib/password';
+import { TIMEZONE } from '../../lib/dates';
+
+// Public page for a one-time setup or reset link (spec §3.4). The token is a
+// secret in the URL: never cached, never sent on as a referrer.
+Astro.response.headers.set('Cache-Control', 'no-store');
+Astro.response.headers.set('Referrer-Policy', 'no-referrer');
+
+const token = Astro.params.token ?? '';
+let info: { name: string; email: string | null; purpose: 'setup' | 'reset'; expires_at: string } | null = null;
+if (/^[A-Za-z0-9_-]{20,100}$/.test(token)) {
+  try {
+    info = await one(
+      sql().query(
+        `select p.name, p.email, t.purpose, t.expires_at
+         from person_tokens t join people p on p.id = t.person_id
+         where t.token_hash = $1 and t.used_at is null and t.expires_at > now() and p.active`,
+        [hashToken(token)]
+      )
+    );
+  } catch (err) {
+    console.error('setup page: lookup failed', err);
+    info = null;
+  }
+}
+if (!info) Astro.response.status = 410;
+
+const expires = info
+  ? new Date(info.expires_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: TIMEZONE })
+  : '';
+---
+
+<Base title={info ? 'Choose a password' : 'Link expired'} noIndex>
+  <div class="min-h-screen flex items-center justify-center px-4 py-16">
+    <div class="w-full max-w-sm animate-fade-up">
+      <div class="flex items-center justify-center gap-2 mb-8">
+        <span class="w-2.5 h-2.5 rounded-full bg-mint-500"></span>
+        <p class="font-display font-semibold text-ink-primary text-xl tracking-tight">{BRAND.name}</p>
+      </div>
+
+      <div class="card p-8">
+        {info ? (
+          <>
+            <p class="eyebrow mb-2">{info.purpose === 'reset' ? 'Password reset' : 'Account setup'}</p>
+            <h1 class="font-display text-2xl font-semibold tracking-tight text-ink-primary mb-1">
+              Hi {info.name}, choose a password
+            </h1>
+            <p class="text-sm text-ink-secondary mb-6">
+              {info.email && <>You'll sign in as <span class="font-medium text-ink-primary">{info.email}</span>. </>}
+              This link works once and expires {expires}.
+            </p>
+            <SetPasswordForm token={token} email={info.email} purpose={info.purpose} client:load />
+          </>
+        ) : (
+          <>
+            <p class="eyebrow mb-2">Link not valid</p>
+            <h1 class="font-display text-2xl font-semibold tracking-tight text-ink-primary mb-2">This link can't be used</h1>
+            <p class="text-sm text-ink-secondary mb-6">
+              This link has expired or was already used. Ask an admin for a new one.
+            </p>
+            <a href="/login" class="btn-secondary w-full justify-center">Go to sign in</a>
+          </>
+        )}
+      </div>
+    </div>
+  </div>
+</Base>

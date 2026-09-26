@@ -1,16 +1,19 @@
 import type { APIRoute } from 'astro';
 import { getMeeting, json, notFound, readBody, requireAuth, requireEnum } from '../../../../lib/api';
 import { one, sql } from '../../../../lib/db';
+import { resolveOwner } from '../../../../lib/people';
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
   const body = await readBody(request);
-  const { title, owner, status } = body;
+  const { title, status } = body;
   if (typeof title !== 'string' || !title.trim()) return json({ error: 'Title required' }, 400);
   const invalid = requireEnum(body, 'status', ['on_track', 'off_track', 'complete', 'dropped']);
   if (invalid) return invalid;
+  const owner = await resolveOwner(body);
+  if ('error' in owner) return json({ error: owner.error }, 400);
 
   const meeting = await getMeeting<{ id: string; team: string }>(params.id, 'id, team');
   if (!meeting) return notFound();
@@ -25,15 +28,16 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   );
   if (!master) {
     master = await one<{ id: string }>(db`
-      insert into rocks (team, title, owner, status) values (${meeting.team}, ${clean}, ${owner ?? null}, ${rockStatus}) returning id
+      insert into rocks (team, title, owner, owner_id, status)
+      values (${meeting.team}, ${clean}, ${owner.owner}, ${owner.owner_id}, ${rockStatus}) returning id
     `);
   } else {
     await db`update rocks set status = ${rockStatus}, updated_at = now() where id = ${master.id} and status = 'planned'`;
   }
 
   const rock = await one(db`
-    insert into meeting_rocks (meeting_id, rock_id, title, owner, status)
-    values (${meeting.id}, ${master?.id ?? null}, ${clean}, ${owner ?? null}, ${rockStatus})
+    insert into meeting_rocks (meeting_id, rock_id, title, owner, owner_id, status)
+    values (${meeting.id}, ${master?.id ?? null}, ${clean}, ${owner.owner}, ${owner.owner_id}, ${rockStatus})
     returning *
   `);
   return json({ rock });

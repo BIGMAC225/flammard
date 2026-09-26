@@ -1,10 +1,16 @@
 import { useState } from 'react';
-import type { Headline, HeadlineType } from '../types';
+import OwnerPicker, { type OwnerValue } from './OwnerPicker';
+import type { Headline, HeadlineType, PersonOption, TeamId } from '../types';
 
 interface HeadlinesPanelProps {
   meetingId: string;
   initialHeadlines: Headline[];
+  team?: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people?: PersonOption[];
 }
+
+const NO_PRESENTER: OwnerValue = { owner_id: null, owner: null };
 
 const TYPE_COLORS: Record<HeadlineType, string> = {
   customer: 'bg-accent/15 text-accent',
@@ -18,11 +24,11 @@ const TYPE_LABELS: Record<HeadlineType, string> = {
   general: 'General',
 };
 
-export default function HeadlinesPanel({ meetingId, initialHeadlines }: HeadlinesPanelProps) {
+export default function HeadlinesPanel({ meetingId, initialHeadlines, team, people }: HeadlinesPanelProps) {
   const [headlines, setHeadlines] = useState<Headline[]>(initialHeadlines);
   const [adding, setAdding] = useState(false);
   const [newText, setNewText] = useState('');
-  const [newPresenter, setNewPresenter] = useState('');
+  const [newPresenter, setNewPresenter] = useState<OwnerValue>(NO_PRESENTER);
   const [newType, setNewType] = useState<HeadlineType>('general');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -36,7 +42,8 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines }: Headline
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: newText.trim(),
-        presenter: newPresenter.trim() || null,
+        presenter_id: newPresenter.owner_id,
+        presenter: newPresenter.owner,
         type: newType,
       }),
     });
@@ -45,7 +52,7 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines }: Headline
     if (!res.ok) { setError(json.error ?? 'Failed to add headline'); return; }
     setHeadlines((h) => [...h, json.headline]);
     setNewText('');
-    setNewPresenter('');
+    setNewPresenter(NO_PRESENTER);
     setNewType('general');
     setAdding(false);
   };
@@ -113,11 +120,13 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines }: Headline
             onChange={(e) => setNewText(e.target.value)}
           />
           <div className="flex gap-2">
-            <input
-              className="input text-sm flex-1"
-              placeholder="Presenter (optional)"
+            <OwnerPicker
               value={newPresenter}
-              onChange={(e) => setNewPresenter(e.target.value)}
+              onChange={setNewPresenter}
+              team={team}
+              initialPeople={people}
+              placeholder="Presenter"
+              className="text-sm flex-1"
             />
             <select
               className="input text-sm w-36"

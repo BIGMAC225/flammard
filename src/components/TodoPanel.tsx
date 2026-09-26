@@ -1,10 +1,18 @@
 import { useState } from 'react';
-import type { Todo, TodoStatus } from '../types';
+import OwnerPicker, { type OwnerValue } from './OwnerPicker';
+import type { PersonOption, TeamId, Todo, TodoStatus } from '../types';
 
 interface TodoPanelProps {
   meetingId: string;
   initialTodos: Todo[];
+  team?: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people?: PersonOption[];
+  /** Owner a new to-do starts with: the signed-in person, or unassigned. */
+  defaultOwner?: OwnerValue;
 }
+
+const UNASSIGNED: OwnerValue = { owner_id: null, owner: null };
 
 const STATUS_LABELS: Record<TodoStatus, string> = {
   open: 'Open',
@@ -20,11 +28,11 @@ const STATUS_COLORS: Record<TodoStatus, string> = {
   dropped: 'bg-bg-elevated text-ink-muted border-line',
 };
 
-export default function TodoPanel({ meetingId, initialTodos }: TodoPanelProps) {
+export default function TodoPanel({ meetingId, initialTodos, team, people, defaultOwner = UNASSIGNED }: TodoPanelProps) {
   const [todos, setTodos] = useState<Todo[]>(initialTodos);
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newOwner, setNewOwner] = useState('');
+  const [newOwner, setNewOwner] = useState<OwnerValue>(defaultOwner);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -46,14 +54,14 @@ export default function TodoPanel({ meetingId, initialTodos }: TodoPanelProps) {
     const res = await fetch(`/api/meetings/${meetingId}/todos`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle.trim(), owner: newOwner.trim() || null }),
+      body: JSON.stringify({ title: newTitle.trim(), owner_id: newOwner.owner_id, owner: newOwner.owner }),
     });
     const json = await res.json();
     setSaving(false);
     if (!res.ok) { setError(json.error ?? 'Failed to add to-do'); return; }
     setTodos((t) => [...t, json.todo]);
     setNewTitle('');
-    setNewOwner('');
+    setNewOwner(defaultOwner);
     setAdding(false);
   };
 
@@ -115,12 +123,7 @@ export default function TodoPanel({ meetingId, initialTodos }: TodoPanelProps) {
             onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') addTodo(); if (e.key === 'Escape') setAdding(false); }}
           />
-          <input
-            className="input text-sm"
-            placeholder="Owner (optional)"
-            value={newOwner}
-            onChange={(e) => setNewOwner(e.target.value)}
-          />
+          <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} className="text-sm" />
           {error && <p className="text-xs text-state-danger">{error}</p>}
           <div className="flex gap-2">
             <button onClick={addTodo} disabled={saving} className="btn-primary text-sm">

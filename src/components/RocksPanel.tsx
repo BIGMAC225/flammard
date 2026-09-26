@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { MeetingRock, RockStatus } from '../types';
+import OwnerPicker, { type OwnerValue } from './OwnerPicker';
+import type { MeetingRock, PersonOption, RockStatus, TeamId } from '../types';
 
 // A rock reviewed in a meeting is never merely "planned"
 type ReviewStatus = Exclude<RockStatus, 'planned'>;
@@ -7,7 +8,12 @@ type ReviewStatus = Exclude<RockStatus, 'planned'>;
 interface RocksPanelProps {
   meetingId: string;
   initialRocks: MeetingRock[];
+  team?: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people?: PersonOption[];
 }
+
+const UNASSIGNED: OwnerValue = { owner_id: null, owner: null };
 
 const STATUS_LABELS: Record<ReviewStatus, string> = {
   on_track: 'On Track',
@@ -23,11 +29,11 @@ const STATUS_COLORS: Record<ReviewStatus, string> = {
   dropped: 'bg-bg-elevated text-ink-muted border-line',
 };
 
-export default function RocksPanel({ meetingId, initialRocks }: RocksPanelProps) {
+export default function RocksPanel({ meetingId, initialRocks, team, people }: RocksPanelProps) {
   const [rocks, setRocks] = useState<MeetingRock[]>(initialRocks);
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newOwner, setNewOwner] = useState('');
+  const [newOwner, setNewOwner] = useState<OwnerValue>(UNASSIGNED);
   const [newStatus, setNewStatus] = useState<RockStatus>('on_track');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -50,14 +56,14 @@ export default function RocksPanel({ meetingId, initialRocks }: RocksPanelProps)
     const res = await fetch(`/api/meetings/${meetingId}/rocks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle.trim(), owner: newOwner.trim() || null, status: newStatus }),
+      body: JSON.stringify({ title: newTitle.trim(), owner_id: newOwner.owner_id, owner: newOwner.owner, status: newStatus }),
     });
     const json = await res.json();
     setSaving(false);
     if (!res.ok) { setError(json.error ?? 'Failed to add rock'); return; }
     setRocks((r) => [...r, json.rock]);
     setNewTitle('');
-    setNewOwner('');
+    setNewOwner(UNASSIGNED);
     setNewStatus('on_track');
     setAdding(false);
   };
@@ -113,12 +119,7 @@ export default function RocksPanel({ meetingId, initialRocks }: RocksPanelProps)
             onKeyDown={(e) => { if (e.key === 'Enter') addRock(); if (e.key === 'Escape') setAdding(false); }}
           />
           <div className="flex gap-2">
-            <input
-              className="input text-sm flex-1"
-              placeholder="Owner (optional)"
-              value={newOwner}
-              onChange={(e) => setNewOwner(e.target.value)}
-            />
+            <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} className="text-sm flex-1" />
             <select
               className="input text-sm w-36"
               value={newStatus}

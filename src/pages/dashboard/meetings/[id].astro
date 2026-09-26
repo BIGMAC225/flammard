@@ -7,7 +7,8 @@ import TodoPanel from '../../../components/TodoPanel';
 import IssuesPanel from '../../../components/IssuesPanel';
 import HeadlinesPanel from '../../../components/HeadlinesPanel';
 import { many, one, sql } from '../../../lib/db';
-import { getMeeting } from '../../../lib/api';
+import { getMeeting, principal } from '../../../lib/api';
+import { listPeopleOptions } from '../../../lib/people';
 import { teamLabel } from '../../../lib/teams';
 import type { Minutes, MeetingRock, Todo, Issue, Headline, Attendee, Meeting } from '../../../types';
 
@@ -49,6 +50,12 @@ const STATUS_CLASS: Record<string, string> = {
 // Land on the session flow until the transcript has been turned into EOS data
 const defaultTab = meeting.analysis_status === 'committed' ? 'eos' : 'session';
 const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultTab;
+
+// Owner pickers on the EOS tab: the people list, and a new to-do's default
+// owner (the signed-in person; unassigned for the shared login)
+const people = activeTab === 'eos' ? await listPeopleOptions(true) : [];
+const me = principal(Astro.locals);
+const defaultOwner = me.kind === 'person' ? { owner_id: me.id, owner: me.name } : { owner_id: null, owner: null };
 ---
 
 <Dashboard eyebrow={`${teamLabel(meeting.team)} · L10`} title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
@@ -115,7 +122,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
       <section class="card">
         <h2 class="section-title mb-1">Headlines</h2>
         <p class="text-sm text-ink-secondary mb-4">Customer wins, employee wins, and good news.</p>
-        <HeadlinesPanel meetingId={id} initialHeadlines={headlines} client:load />
+        <HeadlinesPanel meetingId={id} initialHeadlines={headlines} team={meeting.team} people={people} client:load />
       </section>
 
       <section class="card">
@@ -126,7 +133,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
           </div>
           <a href="/dashboard/rocks" class="text-xs text-accent hover:text-accent-dim transition-colors">All rocks →</a>
         </div>
-        <RocksPanel meetingId={id} initialRocks={meetingRocks} client:load />
+        <RocksPanel meetingId={id} initialRocks={meetingRocks} team={meeting.team} people={people} client:load />
       </section>
 
       <section class="card">
@@ -137,7 +144,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
           </div>
           <a href="/dashboard/todos" class="text-xs text-accent hover:text-accent-dim transition-colors">All to-dos →</a>
         </div>
-        <TodoPanel meetingId={id} initialTodos={todos} client:load />
+        <TodoPanel meetingId={id} initialTodos={todos} team={meeting.team} people={people} defaultOwner={defaultOwner} client:load />
       </section>
 
       <section class="card">
@@ -148,7 +155,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
           </div>
           <a href="/dashboard/issues" class="text-xs text-accent hover:text-accent-dim transition-colors">All issues →</a>
         </div>
-        <IssuesPanel meetingId={id} initialIssues={issues} client:load />
+        <IssuesPanel meetingId={id} initialIssues={issues} team={meeting.team} people={people} client:load />
       </section>
 
       {meeting.conclude_notes && (

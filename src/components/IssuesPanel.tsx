@@ -1,10 +1,16 @@
 import { useState } from 'react';
-import type { Issue, IssueStatus, IssuePriority } from '../types';
+import OwnerPicker, { type OwnerValue } from './OwnerPicker';
+import type { Issue, IssueStatus, IssuePriority, PersonOption, TeamId } from '../types';
 
 interface IssuesPanelProps {
   meetingId: string;
   initialIssues: Issue[];
+  team?: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people?: PersonOption[];
 }
+
+const UNASSIGNED: OwnerValue = { owner_id: null, owner: null };
 
 const STATUS_COLORS: Record<IssueStatus, string> = {
   open: 'bg-state-danger/15 text-state-danger border-state-danger/20',
@@ -18,12 +24,13 @@ const PRIORITY_COLORS: Record<IssuePriority, string> = {
   low: 'text-ink-muted',
 };
 
-export default function IssuesPanel({ meetingId, initialIssues }: IssuesPanelProps) {
+export default function IssuesPanel({ meetingId, initialIssues, team, people }: IssuesPanelProps) {
   const [issues, setIssues] = useState<Issue[]>(initialIssues);
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newPriority, setNewPriority] = useState<IssuePriority>('medium');
+  const [newOwner, setNewOwner] = useState<OwnerValue>(UNASSIGNED);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -52,6 +59,8 @@ export default function IssuesPanel({ meetingId, initialIssues }: IssuesPanelPro
         title: newTitle.trim(),
         description: newDescription.trim() || null,
         priority: newPriority,
+        owner_id: newOwner.owner_id,
+        owner: newOwner.owner,
       }),
     });
     const json = await res.json();
@@ -61,6 +70,7 @@ export default function IssuesPanel({ meetingId, initialIssues }: IssuesPanelPro
     setNewTitle('');
     setNewDescription('');
     setNewPriority('medium');
+    setNewOwner(UNASSIGNED);
     setAdding(false);
   };
 
@@ -101,6 +111,7 @@ export default function IssuesPanel({ meetingId, initialIssues }: IssuesPanelPro
                   {issue.priority}
                 </span>
               </div>
+              {issue.owner && <p className="text-xs text-ink-muted mt-0.5">{issue.owner}</p>}
               {issue.resolution && (
                 <p className="text-xs text-ink-muted mt-0.5 truncate">↳ {issue.resolution}</p>
               )}
@@ -165,6 +176,7 @@ export default function IssuesPanel({ meetingId, initialIssues }: IssuesPanelPro
             value={newDescription}
             onChange={(e) => setNewDescription(e.target.value)}
           />
+          <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} className="text-sm" />
           <div className="flex items-center gap-2">
             <label className="text-xs text-ink-muted">Priority:</label>
             {(['low', 'medium', 'high'] as IssuePriority[]).map((p) => (
