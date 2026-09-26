@@ -27,6 +27,8 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     master = await one<{ id: string }>(db`
       insert into rocks (team, title, owner, status) values (${meeting.team}, ${clean}, ${owner ?? null}, ${rockStatus}) returning id
     `);
+  } else {
+    await db`update rocks set status = ${rockStatus}, updated_at = now() where id = ${master.id} and status = 'planned'`;
   }
 
   const rock = await one(db`

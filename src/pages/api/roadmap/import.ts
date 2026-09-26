@@ -5,6 +5,7 @@ import { many, sql } from '../../../lib/db';
 import { fileToText } from '../../../lib/extract-text';
 import { streamJSON } from '../../../lib/stream-json';
 import { currentTeam } from '../../../lib/teams';
+import { todayLocal } from '../../../lib/dates';
 
 const MAX_BYTES = 15 * 1024 * 1024;
 
@@ -41,7 +42,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   );
 
   return streamJSON(async () => {
-    const roadmap = await extractRoadmap(text, { team, existingPeriods, today: new Date().toISOString().slice(0, 10) });
+    const roadmap = await extractRoadmap(text, { team, existingPeriods, today: todayLocal() });
     return { roadmap, chars: text.length };
   });
 };

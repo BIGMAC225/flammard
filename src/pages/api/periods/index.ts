@@ -2,8 +2,7 @@ import type { APIRoute } from 'astro';
 import { json, readBody, requireAuth } from '../../../lib/api';
 import { one, sql } from '../../../lib/db';
 import { currentTeam } from '../../../lib/teams';
-
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
+import { isIsoDate } from '../../../lib/dates';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   const denied = requireAuth(cookies);
@@ -11,7 +10,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
   const { name, start_date, end_date } = await readBody(request);
   if (typeof name !== 'string' || !name.trim()) return json({ error: 'Name required' }, 400);
-  if (!ISO.test(start_date) || !ISO.test(end_date) || end_date < start_date) return json({ error: 'Valid start and end dates required' }, 400);
+  if (!isIsoDate(start_date) || !isIsoDate(end_date) || end_date < start_date) return json({ error: 'Valid start and end dates required' }, 400);
 
   const team = currentTeam(cookies);
   try {

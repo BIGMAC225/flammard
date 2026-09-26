@@ -12,8 +12,8 @@ const team = currentTeam(Astro.cookies);
 const { periods, unplaced } = await loadRoadmap(team);
 const periodList: Period[] = periods.map(({ id, team, name, start_date, end_date, created_at }) => ({ id, team, name, start_date, end_date, created_at }));
 
-// Steps for the rocks that are live now (past/planned ones load on demand)
-const liveRockIds = periods.filter((p) => p.when === 'current').flatMap((p) => p.rocks.map((r) => r.id));
+// Steps for every rock that still shows a checklist (current and future periods)
+const liveRockIds = periods.filter((p) => p.when !== 'past').flatMap((p) => p.rocks.map((r) => r.id));
 const stepsByRock = await stepsForMany('rock', liveRockIds);
 
 // Group periods by the year they start in

@@ -3,6 +3,7 @@ import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
 import { many, sql } from '../../../../lib/db';
 import { analyzeTranscript } from '../../../../lib/claude';
 import { streamJSON } from '../../../../lib/stream-json';
+import { activateDueRocks } from '../../../../lib/roadmap';
 import type { Attendee } from '../../../../types';
 
 // Polled by the client if the streamed POST response was cut off
@@ -30,6 +31,7 @@ export const POST: APIRoute = async ({ params, cookies }) => {
   if (!meeting.transcript) return json({ error: 'Upload a transcript before analyzing' }, 400);
 
   const db = sql();
+  await activateDueRocks(meeting.team as 'leadership' | 'management');
   // Context so the model can match misheard names to real rocks/to-dos/issues
   const [rocks, openTodos, openIssues] = await Promise.all([
     many<{ title: string; owner: string | null; status: string }>(

@@ -3,10 +3,12 @@ import Dashboard from '../../layouts/Dashboard.astro';
 import StepsPanel from '../../components/StepsPanel';
 import { many, sql } from '../../lib/db';
 import { stepsForMany } from '../../lib/steps';
+import { activateDueRocks } from '../../lib/roadmap';
 import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Rock } from '../../types';
 
 const team = currentTeam(Astro.cookies);
+await activateDueRocks(team);
 const rocks = await many<Rock>(
   sql()`select *, due_date::text as due_date from rocks where team = ${team} order by status asc, created_at desc`
 );

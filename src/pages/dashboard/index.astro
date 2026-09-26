@@ -2,9 +2,11 @@
 import Dashboard from '../../layouts/Dashboard.astro';
 import { many, one, sql } from '../../lib/db';
 import { currentTeam, teamLabel } from '../../lib/teams';
+import { activateDueRocks } from '../../lib/roadmap';
 import type { Attendee } from '../../types';
 
 const team = currentTeam(Astro.cookies);
+await activateDueRocks(team);
 const db = sql();
 const [meetings, counts] = await Promise.all([
   many<{ id: string; title: string; date: string; status: string; attendees: Attendee[] }>(

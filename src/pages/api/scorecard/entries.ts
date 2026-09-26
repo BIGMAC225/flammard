@@ -1,8 +1,6 @@
 import type { APIRoute } from 'astro';
 import { isUuid, json, readBody, requireAuth } from '../../../lib/api';
-
-const isIsoDate = (v: unknown): v is string =>
-  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().startsWith(v);
+import { isIsoDate } from '../../../lib/dates';
 import { one, sql } from '../../../lib/db';
 
 // Manual scorecard entry for a period (upserts on metric + period).

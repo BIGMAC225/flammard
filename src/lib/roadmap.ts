@@ -1,5 +1,19 @@
+import { todayLocal } from './dates';
 import { many, sql } from './db';
 import type { Period, Rock, TeamId } from '../types';
+
+/**
+ * A planned rock becomes "on track" the day its period starts. Run before
+ * anything that only looks at active rocks (roadmap, rocks page, dashboard,
+ * the analyzer's context).
+ */
+export async function activateDueRocks(team: TeamId): Promise<void> {
+  await sql()`
+    update rocks r set status = 'on_track', updated_at = now()
+    from periods p
+    where r.period_id = p.id and r.team = ${team} and r.status = 'planned' and p.start_date <= ${todayLocal()}::date
+  `;
+}
 
 export interface RoadmapRock extends Rock {
   steps_total: number;
@@ -14,6 +28,7 @@ export interface RoadmapPeriod extends Period {
 
 /** Periods (with their rocks and step progress) for a team, oldest first. */
 export async function loadRoadmap(team: TeamId): Promise<{ periods: RoadmapPeriod[]; unplaced: RoadmapRock[] }> {
+  await activateDueRocks(team);
   const db = sql();
   const [periods, rocks] = await Promise.all([
     many<Period>(db`
@@ -29,7 +44,7 @@ export async function loadRoadmap(team: TeamId): Promise<{ periods: RoadmapPerio
     `),
   ]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocal();
   const byPeriod = new Map<string, RoadmapRock[]>();
   const unplaced: RoadmapRock[] = [];
   for (const r of rocks) {

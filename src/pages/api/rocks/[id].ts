@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { isUuid, json, readBody, requireAuth, requireEnum, requireUuid } from '../../../lib/api';
-import { buildUpdate, sql } from '../../../lib/db';
+import { buildUpdate, one, sql } from '../../../lib/db';
+import { isIsoDate } from '../../../lib/dates';
 
 const STATUSES = ['planned', 'on_track', 'off_track', 'complete', 'dropped'];
 
@@ -13,6 +14,11 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   if (invalid) return invalid;
   if ('title' in body && (typeof body.title !== 'string' || !body.title.trim())) return json({ error: 'Title required' }, 400);
   if ('period_id' in body && body.period_id !== null && !isUuid(body.period_id)) return json({ error: 'Invalid period' }, 400);
+  if ('due_date' in body && body.due_date !== null && !isIsoDate(body.due_date)) return json({ error: 'Invalid due date' }, 400);
+  if (isUuid(body.period_id)) {
+    const ok = await one(sql()`select 1 from periods p join rocks r on r.team = p.team where p.id = ${body.period_id} and r.id = ${params.id!}`);
+    if (!ok) return json({ error: 'That period belongs to the other team' }, 400);
+  }
   for (const k of ['title', 'owner', 'notes', 'quarter'] as const) {
     if (typeof body[k] === 'string') body[k] = body[k].trim() || null;
   }

@@ -23,9 +23,13 @@ export default function RoadmapImport() {
     setProposal(null);
     try {
       const res = await fetch('/api/roadmap/import', init);
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Import failed');
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error ?? `Import failed (${res.status})`);
+      }
       setWorking('Laying out periods and rocks…');
       const json = await readStreamedJSON<{ roadmap: ProposedRoadmap }>(res);
+      if (json.truncated) throw new Error('That took too long to lay out. Try a smaller part of the plan, or paste the text for one year at a time.');
       if (json.error || !json.roadmap) throw new Error(json.error ?? 'Import failed');
       setProposal(json.roadmap);
       const k: Record<RockKey, boolean> = {};
