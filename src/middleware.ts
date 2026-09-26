@@ -47,8 +47,21 @@ function sameOrigin(request: Request, url: URL): boolean {
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const url = new URL(context.request.url);
-  const { pathname, search } = url;
+  const { search } = url;
   const method = context.request.method.toUpperCase();
+
+  // Decide on the path Astro will actually route: percent-decoded, with
+  // repeated slashes collapsed and case folded, so "/%61pi/%70eople" or
+  // "//API/people" can't slip past the guards below. Anything that doesn't
+  // decode cleanly (bad escapes, double encoding) is refused.
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    return new Response('Bad request', { status: 400 });
+  }
+  if (/[%\\\0]/.test(pathname)) return new Response('Bad request', { status: 400 });
+  pathname = pathname.replace(/\/{2,}/g, '/').toLowerCase();
 
   // Signed-in visitors skip the login page (as before)
   if (pathname === '/login') {

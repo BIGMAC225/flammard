@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { json } from '../../../lib/api';
+import { json, requirePermission } from '../../../lib/api';
 import { many, sql } from '../../../lib/db';
 import { nameKey, OWNER_COLUMNS } from '../../../lib/people';
 import { getSettings } from '../../../lib/settings';
@@ -17,7 +17,9 @@ interface UnmatchedItem {
   kept: boolean;
 }
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ locals }) => {
+  const denied = requirePermission(locals, 'people.manage');
+  if (denied) return denied;
   const union = OWNER_COLUMNS.map(
     (c) =>
       `select '${c.table}' as tbl, lower(btrim(${c.text})) as key, min(btrim(${c.text})) as text, count(*)::int as n

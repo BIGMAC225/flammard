@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { json, principal, readBody } from '../../../lib/api';
+import { json, principal, readBody, requirePermission } from '../../../lib/api';
 import { many, one, sql } from '../../../lib/db';
 import { canManagePerson, isRole } from '../../../lib/permissions';
 import { isTeam } from '../../../lib/teams';
@@ -14,7 +14,9 @@ type PersonRow = Person & { link_expires_at: string | null; link_purpose: 'setup
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ locals }) => {
+  const denied = requirePermission(locals, 'people.manage');
+  if (denied) return denied;
   const people = await many<PersonRow>(sql()`
     select p.id, p.name, p.email, p.title, p.role, p.teams, p.aliases, p.active,
            (p.password_hash is not null) as has_password, p.last_login_at, p.created_at, p.updated_at,
@@ -31,6 +33,8 @@ export const GET: APIRoute = async () => {
 };
 
 export const POST: APIRoute = async ({ request, locals }) => {
+  const deniedPost = requirePermission(locals, 'people.manage');
+  if (deniedPost) return deniedPost;
   const actor = principal(locals);
   const body = await readBody(request);
 
@@ -62,6 +66,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return json({ error: 'Invalid aliases' }, 400);
   }
   const aliases = dedupe(aliasesIn as string[]).filter((a) => a.toLowerCase() !== name.toLowerCase());
+
+  // Two active people with the same name would make that name ambiguous, and
+  // person_name_keys drops ambiguous keys, so auto-matching would stop working
+  const sameName = await one(sql().query('select 1 from people where active and lower(btrim(name)) = lower(btrim($1))', [name]));
+  if (sameName) return json({ error: 'Someone active already has that name. Edit that person, or add a middle initial to tell them apart.' }, 409);
 
   if (email) {
     const taken = await one(sql().query('select 1 from people where email = $1', [email]));

@@ -173,9 +173,13 @@ export const PATCH: APIRoute = async ({ params, request, locals, cookies }) => {
         ? [sql().query('update person_tokens set used_at = now() where person_id = $1 and used_at is null', [id])]
         : []),
     ];
-    if (extra.length) {
-      const results = await sql().transaction([update, ...extra]);
-      rows = results[0] as Record<string, any>[];
+    // Demoting or deactivating an owner takes a transaction-scoped lock first,
+    // so two owners demoting each other at once run one after the other and
+    // the second one's guard sees the first one's change
+    const lock = losesOwner ? [sql().query("select pg_advisory_xact_lock(hashtext('flammard:owners'))")] : [];
+    if (extra.length || lock.length) {
+      const results = await sql().transaction([...lock, update, ...extra]);
+      rows = results[lock.length] as Record<string, any>[];
     } else {
       rows = await update;
     }

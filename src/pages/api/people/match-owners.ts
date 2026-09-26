@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { isUuid, json, readBody } from '../../../lib/api';
+import { isUuid, json, readBody, requirePermission } from '../../../lib/api';
 import { one, sql } from '../../../lib/db';
 import { nameKey, OWNER_COLUMNS } from '../../../lib/people';
 
@@ -9,7 +9,9 @@ import { nameKey, OWNER_COLUMNS } from '../../../lib/people';
 // the text is remembered as an alias, so it matches automatically from now on.
 // The name also leaves the "kept as text" list if it was there. One transaction.
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, locals }) => {
+  const denied = requirePermission(locals, 'people.manage');
+  if (denied) return denied;
   const { text, person_id, add_alias } = await readBody(request);
   if (typeof text !== 'string' || !text.trim() || text.length > 200) return json({ error: 'Invalid owner text' }, 400);
   if (!isUuid(person_id)) return json({ error: 'Choose a person' }, 400);

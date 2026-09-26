@@ -198,6 +198,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const aliasAdds: Array<{ id: string; alias: string }> = [];
   const textOnly: string[] = [];
   const knownTextOnly = new Set(settings.text_only_owner_names.map(nameKey));
+  const activeNameKeys = new Set((await many<{ name: string }>(db`select name from people where active`)).map((p) => nameKey(p.name)));
   for (const [ninetyName, c] of owners) {
     if ('person_id' in c) {
       const p = personById.get(c.person_id)!;
@@ -208,6 +209,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
       }
     } else if ('create' in c) {
       const k = nameKey(c.create.name);
+      // Same guard as POST /api/people: a duplicate active name breaks owner matching
+      if (activeNameKeys.has(k)) {
+        return json({ error: `"${c.create.name}" is already in People. Map ${ninetyName} to that person instead of creating a new one.` }, 409);
+      }
       const teamsOfName = rows.filter((r) => r.ownerName === ninetyName).map((r) => r.team!);
       let np = newPeople.get(k);
       if (!np) {

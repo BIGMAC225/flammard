@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { json, principal, readBody } from '../../../lib/api';
+import { json, principal, readBody, requirePermission } from '../../../lib/api';
 import { one, sql } from '../../../lib/db';
 
 // POST /api/people/text-only-owners { text, keep } → { names }
@@ -7,6 +7,8 @@ import { one, sql } from '../../../lib/db';
 // it from (keep: false) company_settings.text_only_owner_names, compared
 // case-insensitively. Items are not changed.
 export const POST: APIRoute = async ({ request, locals }) => {
+  const denied = requirePermission(locals, 'people.manage');
+  if (denied) return denied;
   const { text, keep } = await readBody(request);
   if (typeof text !== 'string' || !text.trim() || text.length > 200) return json({ error: 'Invalid owner text' }, 400);
   if (typeof keep !== 'boolean') return json({ error: 'keep must be true or false' }, 400);
