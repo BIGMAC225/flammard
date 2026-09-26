@@ -256,7 +256,8 @@ export async function generateMinutesPDF(input: PDFInput): Promise<Buffer> {
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(40, 40, 55);
-        doc.text(row.title, marginX + 7, y);
+        const titleLines = doc.splitTextToSize(row.title, contentW - 75);
+        doc.text(titleLines, marginX + 7, y);
         doc.setFont('helvetica', 'bold');
         doc.text(row.value ?? '—', pageW - marginX, y, { align: 'right' });
         doc.setFont('helvetica', 'normal');
@@ -264,7 +265,7 @@ export async function generateMinutesPDF(input: PDFInput): Promise<Buffer> {
         doc.setFontSize(7.5);
         const goal = [row.goal ? `Goal ${row.goal}` : '', row.period_date ?? ''].filter(Boolean).join('  ·  ');
         if (goal) doc.text(goal, pageW - marginX - 30, y, { align: 'right' });
-        y += 5.5;
+        y += Math.max(1, titleLines.length) * 4 + 1.5;
       }
       y += 2;
     }

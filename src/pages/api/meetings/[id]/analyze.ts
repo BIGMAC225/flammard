@@ -4,6 +4,20 @@ import { analyzeTranscript } from '../../../../lib/claude';
 import { streamJSON } from '../../../../lib/stream-json';
 import type { Attendee } from '../../../../types';
 
+// Polled by the client if the streamed POST response was cut off
+export const GET: APIRoute = async ({ params, request, cookies }) => {
+  const { supabase, user, response } = await requireUser(request, cookies);
+  if (response) return response;
+  const { meeting, response: forbidden } = await requireMeeting(
+    supabase,
+    user.id,
+    params.id,
+    'analysis, analysis_status, analyzed_at'
+  );
+  if (forbidden) return forbidden;
+  return json(meeting);
+};
+
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const { supabase, user, response } = await requireUser(request, cookies);
   if (response) return response;

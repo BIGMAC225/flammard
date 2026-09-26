@@ -49,5 +49,6 @@ export const GET: APIRoute = async ({ params, request, cookies }) => {
     .createSignedUrl(meeting.recording_path, 60 * 10, { download: fileName });
   if (error || !data) return json({ error: 'Could not create download link' }, 500);
 
-  return Response.redirect(data.signedUrl, 302);
+  // Not Response.redirect(): its headers are immutable and Astro may need to set cookies
+  return new Response(null, { status: 302, headers: { Location: data.signedUrl } });
 };

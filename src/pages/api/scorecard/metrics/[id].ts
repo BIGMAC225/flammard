@@ -12,7 +12,7 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   for (const key of EDITABLE) {
     if (key in body) update[key] = typeof body[key] === 'string' ? body[key].trim() || null : body[key];
   }
-  if (typeof update.title === 'string' && !update.title) return json({ error: 'Title required' }, 400);
+  if ('title' in body && !update.title) return json({ error: 'Title required' }, 400);
 
   const { data: metric, error } = await supabase
     .from('scorecard_metrics')

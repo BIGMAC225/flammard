@@ -44,7 +44,8 @@ export const DELETE: APIRoute = async ({ request, cookies }) => {
   const { id } = (await request.json()) as { id?: string };
   if (!id) return json({ error: 'Entry id required' }, 400);
 
-  const { error } = await supabase.from('scorecard_entries').delete().eq('id', id);
+  const { data, error } = await supabase.from('scorecard_entries').delete().eq('id', id).select('id');
   if (error) return json({ error: error.message }, 500);
+  if (!data?.length) return json({ error: 'Entry not found' }, 404);
   return json({ ok: true });
 };

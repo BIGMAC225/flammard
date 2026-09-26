@@ -50,10 +50,20 @@ export default function MeetingSession(props: Props) {
   const [error, setError] = useState('');
 
   const mediaRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const extRef = useRef('webm');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Release the mic and timer if the component goes away mid-recording
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    },
+    []
+  );
 
   // Don't let a tab close silently throw away an hour of audio
   useEffect(() => {
@@ -69,8 +79,15 @@ export default function MeetingSession(props: Props) {
   // ── 1. Record ──────────────────────────────────────────
   const startMeeting = async () => {
     setError('');
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setError('Microphone access was denied. Allow the microphone for this site and try again.');
+      return;
+    }
+    try {
+      streamRef.current = stream;
       const candidate = MIME_CANDIDATES.find(([m]) => MediaRecorder.isTypeSupported(m));
       const mr = candidate
         ? new MediaRecorder(stream, { mimeType: candidate[0], audioBitsPerSecond: 48_000 })
@@ -82,7 +99,8 @@ export default function MeetingSession(props: Props) {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
       mr.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
+        stream!.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
         void uploadRecording(new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' }));
       };
 
@@ -91,8 +109,10 @@ export default function MeetingSession(props: Props) {
       setRecording(true);
       setElapsed(0);
       timerRef.current = setInterval(() => setElapsed((t) => t + 1), 1000);
-    } catch {
-      setError('Microphone access was denied. Allow the microphone for this site and try again.');
+    } catch (err) {
+      stream.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setError(`Could not start the recorder: ${err instanceof Error ? err.message : 'unknown error'}`);
     }
   };
 
@@ -113,7 +133,7 @@ export default function MeetingSession(props: Props) {
       const path = `${meetingId}/${Date.now()}.${extRef.current}`;
       const { error: upErr } = await supabase.storage
         .from('recordings')
-        .upload(path, blob, { contentType: blob.type || 'audio/webm', upsert: true });
+        .upload(path, blob, { contentType: blob.type || 'audio/webm' });
       if (upErr) throw new Error(upErr.message);
       setUploadPct(100);
 
@@ -139,56 +159,89 @@ export default function MeetingSession(props: Props) {
   };
 
   // ── 2. Transcript ──────────────────────────────────────
-  const uploadTranscriptFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const uploadTranscriptFile = async (file: File) => {
     setSavingTranscript(true);
     setError('');
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetch(`/api/meetings/${meetingId}/transcript`, { method: 'POST', body: form });
-    const json = await res.json();
-    setSavingTranscript(false);
-    if (!res.ok) {
-      setError(json.error ?? 'Could not save transcript');
-      return;
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(`/api/meetings/${meetingId}/transcript`, { method: 'POST', body: form });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Could not save transcript');
+      setHasTranscript(true);
+      setTranscriptInfo(`${file.name} · ${json.length.toLocaleString()} characters`);
+      setAnalysis(null);
+      setAnalysisStatus('none');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save transcript');
+    } finally {
+      setSavingTranscript(false);
+      if (fileRef.current) fileRef.current.value = ''; // allow re-picking the same file
     }
-    setHasTranscript(true);
-    setTranscriptInfo(`${file.name} · ${json.length.toLocaleString()} characters`);
-    setAnalysis(null);
-    setAnalysisStatus('none');
+  };
+
+  const onDropTranscript = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) void uploadTranscriptFile(file);
   };
 
   const saveTranscriptText = async () => {
     setSavingTranscript(true);
     setError('');
-    const res = await fetch(`/api/meetings/${meetingId}/transcript`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript: pasted }),
-    });
-    const json = await res.json();
-    setSavingTranscript(false);
-    if (!res.ok) {
-      setError(json.error ?? 'Could not save transcript');
-      return;
+    try {
+      const res = await fetch(`/api/meetings/${meetingId}/transcript`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: pasted }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Could not save transcript');
+      setHasTranscript(true);
+      setTranscriptInfo(`Pasted transcript · ${json.length.toLocaleString()} characters`);
+      setPasteMode(false);
+      setAnalysis(null);
+      setAnalysisStatus('none');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save transcript');
+    } finally {
+      setSavingTranscript(false);
     }
-    setHasTranscript(true);
-    setTranscriptInfo(`Pasted transcript · ${json.length.toLocaleString()} characters`);
-    setPasteMode(false);
-    setAnalysis(null);
-    setAnalysisStatus('none');
   };
 
   // ── 3. Analyze ─────────────────────────────────────────
+  // If the host cuts the streamed response off, the server may still finish
+  // and save the analysis; poll for it before giving up.
+  const pollForAnalysis = async (startedAt: string): Promise<MeetingAnalysis | null> => {
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const res = await fetch(`/api/meetings/${meetingId}/analyze`);
+      if (!res.ok) continue;
+      const m = (await res.json()) as { analysis: MeetingAnalysis | null; analysis_status: AnalysisStatus; analyzed_at: string | null };
+      if (m.analysis && m.analyzed_at && m.analyzed_at > startedAt) return m.analysis;
+    }
+    return null;
+  };
+
   const analyze = async () => {
     setAnalyzing(true);
     setError('');
+    const startedAt = new Date().toISOString();
     try {
-      const res = await fetch(`/api/meetings/${meetingId}/analyze`, { method: 'POST' });
-      const json = await readStreamedJSON<{ analysis?: MeetingAnalysis }>(res);
-      if (json.error || !json.analysis) throw new Error(json.error ?? 'Analysis failed');
-      setAnalysis(json.analysis);
+      let result: MeetingAnalysis | null = null;
+      try {
+        const res = await fetch(`/api/meetings/${meetingId}/analyze`, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json()).error ?? 'Analysis failed');
+        const json = await readStreamedJSON<{ analysis?: MeetingAnalysis }>(res);
+        if (json.error) throw new Error(json.error);
+        result = json.analysis ?? null;
+      } catch (err) {
+        // A network drop or truncated stream isn't necessarily a failure
+        if (err instanceof Error && !/^(Failed to fetch|Load failed|NetworkError)/.test(err.message) && err.message !== 'Analysis failed') throw err;
+      }
+      if (!result) result = await pollForAnalysis(startedAt);
+      if (!result) throw new Error('Analysis did not finish. Try again, or paste a shorter transcript.');
+      setAnalysis(result);
       setAnalysisStatus('ready');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed');
@@ -201,18 +254,19 @@ export default function MeetingSession(props: Props) {
   const commit = async (selected: MeetingAnalysis) => {
     setCommitting(true);
     setError('');
-    const res = await fetch(`/api/meetings/${meetingId}/commit-analysis`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(selected),
-    });
-    const json = await res.json();
-    setCommitting(false);
-    if (!res.ok) {
-      setError(json.error ?? 'Could not save');
-      return;
+    try {
+      const res = await fetch(`/api/meetings/${meetingId}/commit-analysis`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(selected),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Could not save');
+      window.location.href = `/dashboard/meetings/${meetingId}?tab=eos`;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save');
+      setCommitting(false);
     }
-    window.location.href = `/dashboard/meetings/${meetingId}?tab=eos`;
   };
 
   const step = (n: number, label: string, done: boolean) => (
@@ -297,13 +351,18 @@ export default function MeetingSession(props: Props) {
             <div
               className="flex-1 min-w-[240px] border-2 border-dashed border-line rounded-xl p-6 text-center cursor-pointer hover:border-line-strong hover:bg-bg-elevated/50 transition-colors"
               onClick={() => fileRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={onDropTranscript}
             >
               <input
                 ref={fileRef}
                 type="file"
                 className="hidden"
                 accept=".txt,.srt,.vtt,.json,text/plain"
-                onChange={uploadTranscriptFile}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void uploadTranscriptFile(file);
+                }}
               />
               <p className="text-sm font-medium text-ink-primary">
                 {savingTranscript ? 'Saving…' : hasTranscript ? 'Replace transcript' : 'Drop the transcript file or click to browse'}
@@ -373,6 +432,11 @@ export default function MeetingSession(props: Props) {
 
         {analysis && analysisStatus === 'ready' && !analyzing && (
           <div className="mt-6">
+            {props.analysisStatus === 'committed' && (
+              <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4">
+                This meeting was already populated from an earlier analysis. Accepting again replaces the headlines, rock reviews, to-dos and issues that analysis added.
+              </p>
+            )}
             <AnalysisReview analysis={analysis} committing={committing} onCommit={commit} />
           </div>
         )}

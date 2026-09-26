@@ -35,8 +35,9 @@ On a meeting page the **Session** tab walks through three steps:
 Approving the minutes now includes the EOS sections and the scorecard (latest value per metric as of the meeting date) in the sealed PDF.
 
 Notes:
-- Analysis normally takes 30–90 seconds. The response is streamed so it is not cut off by Netlify's 10-second synchronous function limit.
-- Re-running the analysis after accepting will create duplicate headlines/to-dos if you accept the same items twice — untick what already exists.
+- Analysis normally takes 30–90 seconds. The response is streamed (with heartbeats) so it isn't subject to Netlify's 10-second synchronous function limit, and the result is saved to the database as soon as it's ready. If the browser's connection is cut anyway, the page polls for the saved analysis for up to ~100 seconds before reporting a failure.
+- **Check this on the first real meeting.** If analyses consistently fail while a shorter transcript works, Netlify is ending the function early; the fix is either raising the function timeout (Netlify support, paid plans) or moving the analysis to a Netlify Background Function — say so and it can be done.
+- Re-running the analysis after accepting and accepting again *replaces* the headlines, rock reviews, to-dos and issues that the earlier acceptance added to this meeting, so nothing is duplicated. Status changes made to older to-dos/issues are not reverted.
 
 ## 3. TaxDome → Zapier → Flammard
 
