@@ -1,0 +1,24 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import NinetyImport from '../../components/NinetyImport';
+import ImportHistory from '../../components/ImportHistory';
+import { many, sql } from '../../lib/db';
+import { listPeopleOptions } from '../../lib/people';
+import type { ImportBatch } from '../../types';
+
+// import.manage is enforced by the middleware route rules
+const [rawBatches, people] = await Promise.all([
+  many<ImportBatch>(sql()`
+    select id, source, file_names, counts, status, created_by_name, created_at, undone_at
+    from import_batches order by created_at desc limit 50
+  `),
+  listPeopleOptions(true),
+]);
+const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : (v as string | null));
+const batches = rawBatches.map((b) => ({ ...b, created_at: iso(b.created_at)!, undone_at: iso(b.undone_at) }));
+---
+
+<Dashboard eyebrow="Admin" title="Import from Ninety" description="Bring open issues, to-dos and rocks across from Ninety's XLSX exports. Each import can be undone.">
+  <NinetyImport initialPeople={people} client:load />
+  <ImportHistory initial={batches} client:load />
+</Dashboard>
