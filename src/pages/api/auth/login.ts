@@ -1,38 +1,107 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import { json, readBody } from '../../../lib/api';
+import { passwordMatches, startSession } from '../../../lib/auth';
+import { authStore } from '../../../lib/blobs';
 
-// Single shared account for the whole team. The login page only asks for a
-// password; the email is fixed here and must match the user created in Supabase.
-const SHARED_LOGIN_EMAIL = import.meta.env.SHARED_LOGIN_EMAIL || 'team@flammard.app';
+// Single shared team password; see src/lib/auth.ts.
+//
+// One password guards everything, so attempts are throttled per client:
+// each attempt is *reserved* in the counter before the password is checked
+// (a conditional write, so parallel requests can't all slip under the
+// limit), there's a delay on every miss, and a lock after MAX_FAILURES
+// within WINDOW. Note for a shared office IP: ten wrong guesses lock that
+// IP for 15 minutes for everyone behind it.
+const MAX_FAILURES = 10;
+const WINDOW_MS = 15 * 60 * 1000;
+const FAIL_DELAY_MS = 800;
 
-export const POST: APIRoute = async ({ request, cookies }) => {
-  const body = await request.json();
-  const { password, next } = body as { password: string; next?: string };
+interface Failures {
+  count: number;
+  first: number;
+}
 
-  if (!password) {
-    return new Response(JSON.stringify({ error: 'Password is required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+// IPv6 clients get a whole /64, so count by prefix; IPv4 by address
+function ipv6Prefix(ip: string): string {
+  // expand "::" so the first four hextets are really the /64
+  const [head, tail = ''] = ip.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  return groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':');
+}
+
+function clientKey(request: Request, fallback: string | undefined): string {
+  const ip = request.headers.get('x-nf-client-connection-ip') ?? fallback ?? 'unknown';
+  const key = ip.includes(':') ? ipv6Prefix(ip) : ip;
+  return `login-attempts/${key.replace(/[^0-9a-f.:]/gi, '_')}`;
+}
+
+/**
+ * Atomically bumps the attempt counter. Returns the count after this attempt,
+ * or null if the store is unavailable (then we don't lock anyone out).
+ */
+async function reserveAttempt(key: string): Promise<number | null> {
+  try {
+    const store = authStore();
+    for (let i = 0; i < 4; i++) {
+      const current = await store.getWithMetadata(key, { type: 'json' });
+      const now = Date.now();
+      const prev = (current?.data as Failures | null) ?? null;
+      const fresh = !prev || now - prev.first > WINDOW_MS;
+      const next: Failures = fresh ? { count: 1, first: now } : { count: prev.count + 1, first: prev.first };
+      if (current && !current.etag) continue; // no etag → the write couldn't be conditional; re-read
+      const result = current
+        ? await store.setJSON(key, next, { onlyIfMatch: current.etag })
+        : await store.setJSON(key, next, { onlyIfNew: true });
+      if (result.modified) return next.count;
+      // someone else wrote in between — re-read and try again
+    }
+    return MAX_FAILURES + 1; // couldn't reserve after retries: treat as too busy
+  } catch {
+    return null;
+  }
+}
+
+export const POST: APIRoute = async ({ request, cookies, clientAddress, url }) => {
+  const { password, next } = await readBody(request);
+  if (typeof password !== 'string' || !password) return json({ error: 'Password is required' }, 400);
+
+  let address: string | undefined;
+  try {
+    address = clientAddress;
+  } catch {
+    address = undefined;
+  }
+  const key = clientKey(request, address);
+
+  const attempts = await reserveAttempt(key);
+  if (attempts !== null && attempts > MAX_FAILURES) {
+    await new Promise((r) => setTimeout(r, FAIL_DELAY_MS));
+    return json({ error: 'Too many attempts. Try again in a few minutes.' }, 429);
   }
 
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { error } = await supabase.auth.signInWithPassword({
-    email: SHARED_LOGIN_EMAIL,
-    password,
-  });
-
-  if (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
+  if (!passwordMatches(password)) {
+    await new Promise((r) => setTimeout(r, FAIL_DELAY_MS));
+    return json({ error: 'Incorrect password' }, 401);
   }
 
-  const redirectTo = next && next.startsWith('/') ? next : '/dashboard';
+  // Success: the reservation counted against the window; clear it
+  try {
+    await authStore().delete(key);
+  } catch {
+    /* best effort */
+  }
+  startSession(cookies);
 
-  return new Response(JSON.stringify({ next: redirectTo }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  // Only ever redirect within this site
+  let redirectTo = '/dashboard';
+  if (typeof next === 'string') {
+    try {
+      const target = new URL(next, url.origin);
+      if (target.origin === url.origin && target.pathname.startsWith('/')) redirectTo = target.pathname + target.search;
+    } catch {
+      /* keep default */
+    }
+  }
+  return json({ next: redirectTo });
 };

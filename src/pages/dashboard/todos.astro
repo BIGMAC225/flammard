@@ -1,16 +1,20 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
-import { createSupabaseServerClient } from '../../lib/supabase-server';
+import StepsPanel from '../../components/StepsPanel';
+import { many, sql } from '../../lib/db';
+import { stepsForMany } from '../../lib/steps';
+import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Todo } from '../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
-const { data: todos } = await supabase
-  .from('todos')
-  .select('*, meetings(title, date)')
-  .eq('created_by', user!.id)
-  .order('created_at', { ascending: false }) as { data: (Todo & { meetings: { title: string; date: string } | null })[] | null };
+const team = currentTeam(Astro.cookies);
+const rows = await many<Todo & { meeting_title: string; meeting_date: string }>(sql()`
+  select t.*, m.title as meeting_title, m.date::text as meeting_date
+  from todos t join meetings m on m.id = t.meeting_id
+  where m.team = ${team}
+  order by t.created_at desc
+`);
+const todos = rows.map((t) => ({ ...t, meetings: { title: t.meeting_title, date: t.meeting_date } }));
+const stepsByTodo = await stepsForMany('todo', todos.filter((t) => t.status !== 'done' && t.status !== 'dropped').map((t) => t.id));
 
 const open = todos?.filter(t => t.status === 'open') ?? [];
 const done = todos?.filter(t => t.status === 'done') ?? [];
@@ -32,19 +36,13 @@ const STATUS_LABELS: Record<string, string> = {
 };
 ---
 
-<Dashboard title="To-Dos">
-  <div class="flex items-center justify-between mb-8">
-    <div>
-      <h1 class="text-2xl font-semibold text-ink-primary">To-Dos</h1>
-      <p class="text-sm text-ink-secondary mt-1">7-day action items across all L10 meetings.</p>
+<Dashboard eyebrow={teamLabel(team)} title="To-Dos" description="7-day action items across all L10 meetings.">
+  {open.length > 0 && (
+    <div slot="actions" class="text-right">
+      <div class="font-display text-3xl font-semibold tracking-tight text-amber-900 tabular-nums">{open.length}</div>
+      <div class="eyebrow">open</div>
     </div>
-    {open.length > 0 && (
-      <div class="text-right">
-        <div class="text-3xl font-semibold text-state-warning">{open.length}</div>
-        <div class="text-xs text-ink-muted">open</div>
-      </div>
-    )}
-  </div>
+  )}
 
   <!-- Stats -->
   {todos && todos.length > 0 && (
@@ -55,9 +53,9 @@ const STATUS_LABELS: Record<string, string> = {
         { label: 'Not Done', val: notDone.length, cls: 'text-state-danger' },
         { label: 'Dropped', val: dropped.length, cls: 'text-ink-muted' },
       ].map(({ label, val, cls }) => (
-        <div class="card py-4">
-          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
-          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">{label}</p>
+          <p class={`stat-tile-value ${cls}`}>{val}</p>
         </div>
       ))}
     </div>
@@ -89,6 +87,7 @@ const STATUS_LABELS: Record<string, string> = {
                       </a>
                     )}
                   </div>
+                  <StepsPanel type="todo" parentId={todo.id} parentTitle={todo.title} initialSteps={stepsByTodo[todo.id] ?? []} client:visible />
                 </div>
                 <span class={STATUS_COLORS['open']}>Open</span>
               </div>
@@ -109,6 +108,7 @@ const STATUS_LABELS: Record<string, string> = {
                 <div class="flex-1 min-w-0">
                   <p class="text-sm text-ink-secondary truncate">{todo.title}</p>
                   {todo.owner && <p class="text-xs text-ink-muted mt-0.5">{todo.owner}</p>}
+                  <StepsPanel type="todo" parentId={todo.id} parentTitle={todo.title} initialSteps={stepsByTodo[todo.id] ?? []} client:visible />
                 </div>
                 <span class={STATUS_COLORS['not_done']}>Not Done</span>
               </div>

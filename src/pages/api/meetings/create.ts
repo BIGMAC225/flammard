@@ -1,57 +1,28 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import { json, requireAuth } from '../../../lib/api';
+import { one, sql } from '../../../lib/db';
+import { currentTeam, isTeam } from '../../../lib/teams';
 import type { Attendee } from '../../../types';
 
 export const POST: APIRoute = async ({ request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  const body = await request.json();
-  const { title, date, location, attendees } = body as {
+  const { title, date, location, attendees, team: postedTeam } = (await request.json()) as {
     title: string;
     date: string;
     location?: string;
     attendees: Attendee[];
+    team?: string;
   };
+  if (!title?.trim() || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: 'Title and date are required' }, 400);
 
-  if (!title || !date) {
-    return new Response(JSON.stringify({ error: 'Title and date are required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  const { data, error } = await supabase
-    .from('meetings')
-    .insert({
-      title: title.trim(),
-      date,
-      location: location?.trim() || null,
-      attendees: attendees ?? [],
-      status: 'draft',
-      created_by: user.id,
-    })
-    .select('id')
-    .single();
-
-  if (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  return new Response(JSON.stringify({ id: data.id }), {
-    status: 201,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  // The form posts the team the page showed, so a switch in another tab can't misfile it
+  const team = isTeam(postedTeam) ? postedTeam : currentTeam(cookies);
+  const row = await one<{ id: string }>(sql()`
+    insert into meetings (team, title, date, location, attendees)
+    values (${team}, ${title.trim()}, ${date}, ${location?.trim() || null}, ${JSON.stringify(attendees ?? [])}::jsonb)
+    returning id
+  `);
+  return json({ id: row!.id });
 };

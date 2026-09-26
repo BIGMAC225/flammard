@@ -1,25 +1,43 @@
 ---
 import Base from './Base.astro';
-import { createSupabaseServerClient } from '../lib/supabase-server';
+import { TEAMS, currentTeam } from '../lib/teams';
 
 interface Props {
   title?: string;
+  /** Small-caps context line above the title, e.g. "EOS" or "Meetings". */
+  eyebrow?: string;
+  description?: string;
   back?: { href: string; label: string };
 }
 
-const { title, back } = Astro.props;
+const { title, eyebrow, description, back } = Astro.props;
 const appName = import.meta.env.PUBLIC_APP_NAME || 'Flammard';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
+const NAV = [
+  { href: '/dashboard', label: 'Dashboard', exact: true },
+  { href: '/dashboard/meetings', label: 'Meetings' },
+  { href: '/dashboard/roadmap', label: 'Roadmap' },
+  { href: '/dashboard/rocks', label: 'Rocks' },
+  { href: '/dashboard/todos', label: 'To-Dos' },
+  { href: '/dashboard/issues', label: 'Issues' },
+  { href: '/dashboard/scorecard', label: 'Scorecard' },
+  { href: '/dashboard/register', label: 'Register' },
+];
+const path = Astro.url.pathname;
+const team = currentTeam(Astro.cookies);
+const switchNext = encodeURIComponent(path + Astro.url.search);
+const isActive = (item: (typeof NAV)[number]) =>
+  item.exact ? path === item.href : path.startsWith(item.href);
+
+const hasActions = Astro.slots.has('actions');
 ---
 
 <Base title={title} noIndex>
   <div class="min-h-screen flex flex-col">
     <!-- Top nav -->
-    <header class="border-b border-line bg-bg-surface/80 backdrop-blur-sm sticky top-0 z-40">
+    <header class="border-b border-line/70 bg-bg-surface/90 backdrop-blur-sm sticky top-0 z-40">
       <div class="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 min-w-0">
           {back ? (
             <a href={back.href} class="flex items-center gap-1.5 text-ink-secondary hover:text-ink-primary transition-colors text-sm">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -28,32 +46,79 @@ const { data: { user } } = await supabase.auth.getUser();
               {back.label}
             </a>
           ) : (
-            <a href="/dashboard" class="font-semibold text-ink-primary text-sm tracking-tight">{appName}</a>
+            <a href="/dashboard" class="flex items-center gap-2 font-display font-semibold text-ink-primary text-lg tracking-tight">
+              <span class="w-2.5 h-2.5 rounded-full bg-mint-500"></span>
+              {appName}
+            </a>
           )}
         </div>
 
-        <nav class="hidden sm:flex items-center gap-1">
-          <a href="/dashboard" class="btn-ghost text-xs">Dashboard</a>
-          <a href="/dashboard/meetings" class="btn-ghost text-xs">Meetings</a>
-          <a href="/dashboard/rocks" class="btn-ghost text-xs">Rocks</a>
-          <a href="/dashboard/todos" class="btn-ghost text-xs">To-Dos</a>
-          <a href="/dashboard/issues" class="btn-ghost text-xs">Issues</a>
-          <a href="/dashboard/register" class="btn-ghost text-xs">Register</a>
+        <nav class="hidden md:flex items-center gap-0.5">
+          {NAV.map((item) => (
+            <a
+              href={item.href}
+              class={`px-3 py-1.5 rounded-lg text-[13px] font-semibold transition-colors ${
+                isActive(item)
+                  ? 'bg-accent-muted text-accent'
+                  : 'text-ink-secondary hover:text-ink-primary hover:bg-bg-elevated'
+              }`}
+            >
+              {item.label}
+            </a>
+          ))}
         </nav>
 
         <div class="flex items-center gap-2">
-          <span class="hidden sm:block text-xs text-ink-muted">{user?.email}</span>
+          <!-- Team switcher: scopes every list on the site -->
+          <div class="flex gap-0.5 p-0.5 bg-bg-elevated rounded-full" role="group" aria-label="Team">
+            {TEAMS.map((t) => (
+              <a
+                href={`/api/team?set=${t.id}&next=${switchNext}`}
+                class={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                  team === t.id ? 'bg-bg-surface text-accent shadow-soft' : 'text-ink-secondary hover:text-ink-primary'
+                }`}
+                aria-current={team === t.id ? 'true' : undefined}
+              >
+                {t.short}
+              </a>
+            ))}
+          </div>
           <form method="POST" action="/api/auth/logout">
             <button type="submit" class="btn-ghost text-xs">Sign out</button>
           </form>
         </div>
       </div>
+
+      <!-- Compact nav on small screens -->
+      <nav class="md:hidden flex gap-1 overflow-x-auto px-4 pb-2 -mt-1">
+        {NAV.map((item) => (
+          <a
+            href={item.href}
+            class={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
+              isActive(item) ? 'bg-accent text-white' : 'bg-bg-elevated text-ink-secondary'
+            }`}
+          >
+            {item.label}
+          </a>
+        ))}
+      </nav>
     </header>
 
     <!-- Page content -->
-    <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
-      {title && (
-        <h1 class="text-2xl font-semibold text-ink-primary mb-6">{title}</h1>
+    <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-8 md:py-10 animate-fade-up">
+      {(title || hasActions) && (
+        <div class="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+          <div class="min-w-0">
+            {eyebrow && <p class="eyebrow mb-2">{eyebrow}</p>}
+            {title && <h1 class="page-title">{title}</h1>}
+            {description && <p class="page-subtitle">{description}</p>}
+          </div>
+          {hasActions && (
+            <div class="flex flex-wrap items-center gap-2">
+              <slot name="actions" />
+            </div>
+          )}
+        </div>
       )}
       <slot />
     </main>

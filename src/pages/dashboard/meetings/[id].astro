@@ -1,47 +1,37 @@
 ---
 import Dashboard from '../../../layouts/Dashboard.astro';
 import MinutesDraftEditor from '../../../components/MinutesDraftEditor';
+import MeetingSession from '../../../components/MeetingSession';
 import RocksPanel from '../../../components/RocksPanel';
 import TodoPanel from '../../../components/TodoPanel';
 import IssuesPanel from '../../../components/IssuesPanel';
 import HeadlinesPanel from '../../../components/HeadlinesPanel';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
-import type { Minutes, MeetingRock, Todo, Issue, Headline, Attendee } from '../../../types';
+import { many, one, sql } from '../../../lib/db';
+import { getMeeting } from '../../../lib/api';
+import { teamLabel } from '../../../lib/teams';
+import type { Minutes, MeetingRock, Todo, Issue, Headline, Attendee, Meeting } from '../../../types';
 
 const { id } = Astro.params;
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
 if (!id) return Astro.redirect('/dashboard/meetings');
 
-const { data: meeting, error } = await supabase
-  .from('meetings')
-  .select('*')
-  .eq('id', id)
-  .single();
+const meeting = await getMeeting<Meeting>(id, '*, date::text as date');
+if (!meeting) return Astro.redirect('/dashboard/meetings');
 
-if (error || !meeting || meeting.created_by !== user!.id) {
-  return Astro.redirect('/dashboard/meetings');
-}
-
-const [
-  { data: minutes },
-  { data: meetingRocks },
-  { data: todos },
-  { data: issues },
-  { data: headlines },
-  { data: approvalData },
-] = await Promise.all([
-  supabase.from('minutes').select('*').eq('meeting_id', id).maybeSingle(),
-  supabase.from('meeting_rocks').select('*').eq('meeting_id', id).order('created_at'),
-  supabase.from('todos').select('*').eq('meeting_id', id).order('created_at'),
-  supabase.from('issues').select('*').eq('meeting_id', id).order('created_at'),
-  supabase.from('headlines').select('*').eq('meeting_id', id).order('created_at'),
-  supabase.from('approvals').select('approved_by_email, approved_at').eq('minutes_id', (await supabase.from('minutes').select('id').eq('meeting_id', id).maybeSingle()).data?.id ?? '').maybeSingle(),
+const db = sql();
+const [typedMinutes, meetingRocks, todos, issues, headlines, approvalData] = await Promise.all([
+  one<Minutes>(db`select * from minutes where meeting_id = ${id}`),
+  many<MeetingRock>(db`select * from meeting_rocks where meeting_id = ${id} order by created_at`),
+  many<Todo>(db`select * from todos where meeting_id = ${id} order by created_at`),
+  many<Issue>(db`select * from issues where meeting_id = ${id} order by created_at`),
+  many<Headline>(db`select * from headlines where meeting_id = ${id} order by created_at`),
+  one<{ approved_by: string; approved_at: string }>(db`
+    select a.approved_by, a.approved_at from approvals a
+    join minutes mi on mi.id = a.minutes_id where mi.meeting_id = ${id}
+    order by a.approved_at desc limit 1
+  `),
 ]);
 
-const typedMinutes = minutes as Minutes | null;
-const attendees = (meeting.attendees as Attendee[]) ?? [];
+const attendees = meeting.attendees ?? [];
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
@@ -56,13 +46,15 @@ const STATUS_CLASS: Record<string, string> = {
   distributed: 'badge-sealed',
 };
 
-const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? 'eos';
+// Land on the session flow until the transcript has been turned into EOS data
+const defaultTab = meeting.analysis_status === 'committed' ? 'eos' : 'session';
+const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultTab;
 ---
 
-<Dashboard title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
+<Dashboard eyebrow={`${teamLabel(meeting.team)} · L10`} title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
 
   <!-- Meeting meta -->
-  <div class="flex flex-wrap items-center gap-3 mb-2 -mt-2">
+  <div class="flex flex-wrap items-center gap-3 mb-2 -mt-4">
     <span class={STATUS_CLASS[meeting.status] ?? 'badge-draft'}>
       {STATUS_LABEL[meeting.status] ?? meeting.status}
     </span>
@@ -83,16 +75,17 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? 'eos';
   )}
 
   <!-- Tab bar -->
-  <div class="flex gap-1 p-1 bg-bg-elevated rounded-xl w-fit mb-6">
+  <div class="flex gap-1 p-1 bg-bg-elevated rounded-full w-fit mb-6">
     {[
+      { id: 'session', label: 'Session' },
       { id: 'eos', label: 'EOS Sections' },
       { id: 'minutes', label: 'Minutes' },
     ].map(tab => (
       <a
         href={`?tab=${tab.id}`}
-        class={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+        class={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
           activeTab === tab.id
-            ? 'bg-bg-surface text-ink-primary shadow-sm'
+            ? 'bg-bg-surface text-accent shadow-soft'
             : 'text-ink-secondary hover:text-ink-primary'
         }`}
       >
@@ -101,52 +94,66 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? 'eos';
     ))}
   </div>
 
+  <!-- ── SESSION: record → transcript → analyze ────────── -->
+  {activeTab === 'session' && (
+    <MeetingSession
+      meetingId={id}
+      hasRecording={!!meeting.recording_path}
+      hasTranscript={!!meeting.transcript}
+      transcriptChars={meeting.transcript?.length ?? 0}
+      transcriptFileName={meeting.transcript_path ?? null}
+      analysis={meeting.analysis}
+      analysisStatus={meeting.analysis_status ?? 'none'}
+      client:load
+    />
+  )}
+
   <!-- ── EOS SECTIONS ───────────────────────────────────── -->
   {activeTab === 'eos' && (
     <div class="space-y-6">
 
       <section class="card">
-        <h2 class="text-base font-semibold text-ink-primary mb-1">Headlines</h2>
+        <h2 class="section-title mb-1">Headlines</h2>
         <p class="text-sm text-ink-secondary mb-4">Customer wins, employee wins, and good news.</p>
-        <HeadlinesPanel meetingId={id} initialHeadlines={headlines ?? []} client:load />
+        <HeadlinesPanel meetingId={id} initialHeadlines={headlines} client:load />
       </section>
 
       <section class="card">
         <div class="flex items-start justify-between mb-4">
           <div>
-            <h2 class="text-base font-semibold text-ink-primary">Rocks</h2>
+            <h2 class="section-title">Rocks</h2>
             <p class="text-sm text-ink-secondary mt-0.5">Quarterly goals reviewed at this meeting.</p>
           </div>
           <a href="/dashboard/rocks" class="text-xs text-accent hover:text-accent-dim transition-colors">All rocks →</a>
         </div>
-        <RocksPanel meetingId={id} initialRocks={meetingRocks ?? []} client:load />
+        <RocksPanel meetingId={id} initialRocks={meetingRocks} client:load />
       </section>
 
       <section class="card">
         <div class="flex items-start justify-between mb-4">
           <div>
-            <h2 class="text-base font-semibold text-ink-primary">To-Dos</h2>
+            <h2 class="section-title">To-Dos</h2>
             <p class="text-sm text-ink-secondary mt-0.5">7-day action items for this meeting.</p>
           </div>
           <a href="/dashboard/todos" class="text-xs text-accent hover:text-accent-dim transition-colors">All to-dos →</a>
         </div>
-        <TodoPanel meetingId={id} initialTodos={todos ?? []} client:load />
+        <TodoPanel meetingId={id} initialTodos={todos} client:load />
       </section>
 
       <section class="card">
         <div class="flex items-start justify-between mb-4">
           <div>
-            <h2 class="text-base font-semibold text-ink-primary">Issues (IDS)</h2>
+            <h2 class="section-title">Issues (IDS)</h2>
             <p class="text-sm text-ink-secondary mt-0.5">Issues identified, discussed, and solved.</p>
           </div>
           <a href="/dashboard/issues" class="text-xs text-accent hover:text-accent-dim transition-colors">All issues →</a>
         </div>
-        <IssuesPanel meetingId={id} initialIssues={issues ?? []} client:load />
+        <IssuesPanel meetingId={id} initialIssues={issues} client:load />
       </section>
 
       {meeting.conclude_notes && (
         <section class="card">
-          <h2 class="text-base font-semibold text-ink-primary mb-3">Conclude Notes</h2>
+          <h2 class="section-title mb-3">Conclude Notes</h2>
           <p class="text-sm text-ink-secondary leading-relaxed">{meeting.conclude_notes}</p>
         </section>
       )}
@@ -160,7 +167,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? 'eos';
       <section class="card">
         <div class="flex items-center justify-between mb-4">
           <div>
-            <h2 class="text-base font-semibold text-ink-primary">
+            <h2 class="section-title">
               {typedMinutes?.sealed_at ? 'Sealed minutes' : 'Meeting minutes'}
             </h2>
             {typedMinutes?.sealed_at && (
@@ -168,7 +175,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? 'eos';
             )}
             {approvalData && (
               <p class="text-xs text-ink-muted mt-0.5">
-                Approved by {approvalData.approved_by_email} · {new Date(approvalData.approved_at).toLocaleString()}
+                Approved by {approvalData.approved_by} · {new Date(approvalData.approved_at).toLocaleString()}
               </p>
             )}
           </div>

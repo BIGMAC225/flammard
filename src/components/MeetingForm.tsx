@@ -5,7 +5,7 @@ interface MeetingFormProps {
   onCreated?: (id: string) => void;
 }
 
-export default function MeetingForm({ onCreated }: MeetingFormProps) {
+export default function MeetingForm({ onCreated, team }: MeetingFormProps & { team?: string }) {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [location, setLocation] = useState('');
@@ -31,7 +31,7 @@ export default function MeetingForm({ onCreated }: MeetingFormProps) {
     const res = await fetch('/api/meetings/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: title.trim(), date, location: location.trim(), attendees: clean }),
+      body: JSON.stringify({ title: title.trim(), date, location: location.trim(), attendees: clean, team }),
     });
 
     const json = await res.json();
@@ -115,7 +115,7 @@ export default function MeetingForm({ onCreated }: MeetingFormProps) {
               <input
                 type="email"
                 className="input flex-1"
-                placeholder="Email (for distribution)"
+                placeholder="Email (optional)"
                 value={a.email ?? ''}
                 onChange={(e) => updateAttendee(i, 'email', e.target.value)}
               />
@@ -131,7 +131,7 @@ export default function MeetingForm({ onCreated }: MeetingFormProps) {
             </div>
           ))}
         </div>
-        <p className="text-xs text-ink-muted mt-2">Email is used for acknowledgement distribution. No account required for recipients.</p>
+        <p className="text-xs text-ink-muted mt-2">Names appear in the minutes and help the transcript analysis attribute to-dos.</p>
       </div>
 
       <div className="pt-2">

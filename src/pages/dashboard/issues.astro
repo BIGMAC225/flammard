@@ -1,18 +1,20 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
-import { createSupabaseServerClient } from '../../lib/supabase-server';
+import StepsPanel from '../../components/StepsPanel';
+import { many, sql } from '../../lib/db';
+import { stepsForMany } from '../../lib/steps';
+import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Issue } from '../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
-const { data: issues } = await supabase
-  .from('issues')
-  .select('*, meetings(title, date)')
-  .eq('created_by', user!.id)
-  .order('status', { ascending: true })
-  .order('priority', { ascending: false })
-  .order('created_at', { ascending: false }) as { data: (Issue & { meetings: { title: string; date: string } | null })[] | null };
+const team = currentTeam(Astro.cookies);
+const rows = await many<Issue & { meeting_title: string; meeting_date: string }>(sql()`
+  select i.*, m.title as meeting_title, m.date::text as meeting_date
+  from issues i join meetings m on m.id = i.meeting_id
+  where m.team = ${team}
+  order by i.status asc, case i.priority when 'high' then 0 when 'medium' then 1 else 2 end, i.created_at desc
+`);
+const issues = rows.map((i) => ({ ...i, meetings: { title: i.meeting_title, date: i.meeting_date } }));
+const stepsByIssue = await stepsForMany('issue', issues.filter((i) => i.status === 'open').map((i) => i.id));
 
 const open = issues?.filter(i => i.status === 'open') ?? [];
 const solved = issues?.filter(i => i.status === 'solved') ?? [];
@@ -31,19 +33,13 @@ const STATUS_COLORS: Record<string, string> = {
 };
 ---
 
-<Dashboard title="Issues">
-  <div class="flex items-center justify-between mb-8">
-    <div>
-      <h1 class="text-2xl font-semibold text-ink-primary">Issues</h1>
-      <p class="text-sm text-ink-secondary mt-1">IDS items across all L10 meetings.</p>
+<Dashboard eyebrow={teamLabel(team)} title="Issues" description="IDS items across all L10 meetings.">
+  {open.length > 0 && (
+    <div slot="actions" class="text-right">
+      <div class="font-display text-3xl font-semibold tracking-tight text-red-800 tabular-nums">{open.length}</div>
+      <div class="eyebrow">open</div>
     </div>
-    {open.length > 0 && (
-      <div class="text-right">
-        <div class="text-3xl font-semibold text-state-danger">{open.length}</div>
-        <div class="text-xs text-ink-muted">open</div>
-      </div>
-    )}
-  </div>
+  )}
 
   <!-- Stats -->
   {issues && issues.length > 0 && (
@@ -53,9 +49,9 @@ const STATUS_COLORS: Record<string, string> = {
         { label: 'Solved', val: solved.length, cls: 'text-state-success' },
         { label: 'Dropped', val: dropped.length, cls: 'text-ink-muted' },
       ].map(({ label, val, cls }) => (
-        <div class="card py-4">
-          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
-          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">{label}</p>
+          <p class={`stat-tile-value ${cls}`}>{val}</p>
         </div>
       ))}
     </div>
@@ -87,6 +83,7 @@ const STATUS_COLORS: Record<string, string> = {
                       {issue.meetings.title} · {issue.meetings.date}
                     </a>
                   )}
+                  <StepsPanel type="issue" parentId={issue.id} parentTitle={issue.title} initialSteps={stepsByIssue[issue.id] ?? []} client:visible />
                 </div>
                 <span class="text-xs text-ink-muted capitalize flex-shrink-0">{issue.priority}</span>
               </div>

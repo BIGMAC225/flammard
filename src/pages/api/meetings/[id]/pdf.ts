@@ -1,50 +1,23 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient, createServiceClient } from '../../../../lib/supabase-server';
+import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { one, sql } from '../../../../lib/db';
+import { minutesPdf } from '../../../../lib/blobs';
 
-export const GET: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+export const GET: APIRoute = async ({ params, cookies }) => {
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  if (!user) {
-    return new Response('Unauthorized', { status: 401 });
-  }
+  const meeting = await getMeeting<{ id: string; title: string }>(params.id, 'id, title');
+  if (!meeting) return notFound();
 
-  const { id } = params;
+  const minutes = await one<{ pdf_path: string | null }>(sql()`select pdf_path from minutes where meeting_id = ${meeting.id}`);
+  if (!minutes?.pdf_path) return json({ error: 'PDF not found' }, 404);
 
-  const { data: meeting } = await supabase
-    .from('meetings')
-    .select('created_by, title')
-    .eq('id', id)
-    .single();
-
-  if (!meeting || meeting.created_by !== user.id) {
-    return new Response('Forbidden', { status: 403 });
-  }
-
-  const { data: minutes } = await supabase
-    .from('minutes')
-    .select('pdf_path')
-    .eq('meeting_id', id)
-    .single();
-
-  if (!minutes?.pdf_path) {
-    return new Response('PDF not found', { status: 404 });
-  }
-
-  const serviceClient = createServiceClient();
-  const { data: fileData, error } = await serviceClient.storage
-    .from('minutes-pdf')
-    .download(minutes.pdf_path);
-
-  if (error || !fileData) {
-    return new Response('Failed to retrieve PDF', { status: 500 });
-  }
+  const file = await minutesPdf().get(minutes.pdf_path, { type: 'arrayBuffer' });
+  if (!file) return json({ error: 'Failed to retrieve PDF' }, 500);
 
   const fileName = `${meeting.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-minutes.pdf`;
-
-  return new Response(await fileData.arrayBuffer(), {
+  return new Response(file, {
     headers: {
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${fileName}"`,

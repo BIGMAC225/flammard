@@ -1,4 +1,32 @@
-import type { Decision, ActionItem, DiscussionPoint, Attendee } from '../types';
+import type {
+  Decision,
+  ActionItem,
+  DiscussionPoint,
+  Attendee,
+  Headline,
+  MeetingRock,
+  Todo,
+  Issue,
+} from '../types';
+
+export interface PDFScorecardRow {
+  title: string;
+  goal: string | null;
+  value: string | null;
+  on_track: boolean | null;
+  period_date: string | null;
+}
+
+/** EOS sections rendered after the minutes */
+export interface PDFEOSInput {
+  headlines: Headline[];
+  scorecard: PDFScorecardRow[];
+  rocks: MeetingRock[];
+  todos: Todo[];
+  issues: Issue[];
+  meetingRating: number | null;
+  concludeNotes: string | null;
+}
 
 export interface PDFInput {
   title: string;
@@ -13,7 +41,22 @@ export interface PDFInput {
   approvedBy: string;
   approvedAt: string;
   appName?: string;
+  eos?: PDFEOSInput;
 }
+
+const TRACK_COLORS: Record<string, [number, number, number]> = {
+  planned: [160, 160, 175],
+  on_track: [34, 197, 94],
+  off_track: [239, 68, 68],
+  complete: [123, 108, 246],
+  dropped: [160, 160, 175],
+  done: [34, 197, 94],
+  not_done: [239, 68, 68],
+  open: [96, 165, 250],
+  solved: [34, 197, 94],
+};
+
+const label = (s: string) => s.replace(/_/g, ' ').toUpperCase();
 
 const OUTCOME_COLORS: Record<string, [number, number, number]> = {
   approved: [34, 197, 94],
@@ -172,6 +215,96 @@ export async function generateMinutesPDF(input: PDFInput): Promise<Buffer> {
       write(d.topic, 9.5, 'bold', [60, 60, 80]);
       write(d.notes, 9, 'normal', [80, 80, 100]);
       y += 4;
+    }
+  }
+
+  // ── EOS sections ─────────────────────────────────────────
+  // A bulleted row: coloured status dot, main text, then a muted meta line.
+  const bullet = (text: string, color: [number, number, number], meta: string[]) => {
+    checkY(18);
+    doc.setFillColor(...color);
+    doc.circle(marginX + 2.5, y - 1.5, 2, 'F');
+    const lines = doc.splitTextToSize(text, contentW - 9);
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(40, 40, 55);
+    doc.text(lines, marginX + 7, y);
+    y += lines.length * 3.8 + 1;
+    const m = meta.filter(Boolean);
+    if (m.length) write(m.join('   ·   '), 7.5, 'normal', [120, 120, 140], marginX + 7);
+    y += 3;
+  };
+
+  const eos = input.eos;
+  if (eos) {
+    if (eos.headlines.length > 0) {
+      checkY(30);
+      sectionHeader('HEADLINES');
+      for (const h of eos.headlines) {
+        bullet(h.text, [123, 108, 246], [label(h.type), h.presenter ?? '']);
+      }
+    }
+
+    if (eos.scorecard.length > 0) {
+      checkY(30);
+      sectionHeader('SCORECARD');
+      for (const row of eos.scorecard) {
+        checkY(10);
+        const color: [number, number, number] =
+          row.on_track === true ? [34, 197, 94] : row.on_track === false ? [239, 68, 68] : [160, 160, 175];
+        doc.setFillColor(...color);
+        doc.circle(marginX + 2.5, y - 1.5, 2, 'F');
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(40, 40, 55);
+        const titleLines = doc.splitTextToSize(row.title, contentW - 75);
+        doc.text(titleLines, marginX + 7, y);
+        doc.setFont('helvetica', 'bold');
+        doc.text(row.value ?? '—', pageW - marginX, y, { align: 'right' });
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(120, 120, 140);
+        doc.setFontSize(7.5);
+        const goal = [row.goal ? `Goal ${row.goal}` : '', row.period_date ?? ''].filter(Boolean).join('  ·  ');
+        if (goal) doc.text(goal, pageW - marginX - 30, y, { align: 'right' });
+        y += Math.max(1, titleLines.length) * 4 + 1.5;
+      }
+      y += 2;
+    }
+
+    if (eos.rocks.length > 0) {
+      checkY(30);
+      sectionHeader('ROCKS');
+      for (const r of eos.rocks) {
+        bullet(r.title, TRACK_COLORS[r.status] ?? [160, 160, 175], [label(r.status), r.owner ?? '', r.notes ?? '']);
+      }
+    }
+
+    if (eos.todos.length > 0) {
+      checkY(30);
+      sectionHeader('TO-DOS');
+      for (const t of eos.todos) {
+        bullet(t.title, TRACK_COLORS[t.status] ?? [96, 165, 250], [label(t.status), t.owner ?? '']);
+      }
+    }
+
+    if (eos.issues.length > 0) {
+      checkY(30);
+      sectionHeader('ISSUES (IDS)');
+      for (const i of eos.issues) {
+        bullet(i.title, TRACK_COLORS[i.status] ?? [96, 165, 250], [
+          label(i.status),
+          `${i.priority} priority`,
+          i.resolution ? `Resolved: ${i.resolution}` : (i.description ?? ''),
+        ]);
+      }
+    }
+
+    if (eos.meetingRating != null || eos.concludeNotes) {
+      checkY(30);
+      sectionHeader('CONCLUDE');
+      if (eos.meetingRating != null) write(`Meeting rating: ${eos.meetingRating}/10`, 9.5, 'bold', [60, 60, 80]);
+      if (eos.concludeNotes) write(eos.concludeNotes, 9, 'normal', [80, 80, 100]);
+      y += 2;
     }
   }
 

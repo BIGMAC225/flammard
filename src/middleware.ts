@@ -1,28 +1,24 @@
 import { defineMiddleware } from 'astro:middleware';
-import { createSupabaseServerClient } from './lib/supabase-server';
+import { isAuthenticated } from './lib/auth';
 
 const PROTECTED = ['/dashboard'];
 const AUTH_ONLY = ['/login'];
 
 export const onRequest = defineMiddleware(async (context, next) => {
-  const { pathname } = new URL(context.request.url);
+  const { pathname, search } = new URL(context.request.url);
 
   const needsAuth = PROTECTED.some((p) => pathname.startsWith(p));
   const isAuthPage = AUTH_ONLY.includes(pathname);
 
   if (!needsAuth && !isAuthPage) return next();
 
-  const supabase = createSupabaseServerClient(context.request, context.cookies);
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const signedIn = isAuthenticated(context.cookies);
 
-  if (needsAuth && !user) {
-    const next = encodeURIComponent(pathname + new URL(context.request.url).search);
-    return context.redirect(`/login?next=${next}`);
+  if (needsAuth && !signedIn) {
+    return context.redirect(`/login?next=${encodeURIComponent(pathname + search)}`);
   }
 
-  if (isAuthPage && user) {
+  if (isAuthPage && signedIn) {
     return context.redirect('/dashboard');
   }
 

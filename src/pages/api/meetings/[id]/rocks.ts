@@ -1,50 +1,40 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../../lib/supabase-server';
+import { getMeeting, json, notFound, readBody, requireAuth, requireEnum } from '../../../../lib/api';
+import { one, sql } from '../../../../lib/db';
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  const { id } = params;
-  const { title, owner, status } = await request.json();
-  if (!title?.trim()) return new Response(JSON.stringify({ error: 'Title required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  const body = await readBody(request);
+  const { title, owner, status } = body;
+  if (typeof title !== 'string' || !title.trim()) return json({ error: 'Title required' }, 400);
+  const invalid = requireEnum(body, 'status', ['on_track', 'off_track', 'complete', 'dropped']);
+  if (invalid) return invalid;
 
-  // Ensure the meeting belongs to the user
-  const { data: meeting } = await supabase.from('meetings').select('id').eq('id', id).eq('created_by', user.id).single();
-  if (!meeting) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  const meeting = await getMeeting<{ id: string; team: string }>(params.id, 'id, team');
+  if (!meeting) return notFound();
 
-  // Create or find top-level rock
-  const { data: existingRock } = await supabase
-    .from('rocks')
-    .select('id')
-    .eq('title', title.trim())
-    .eq('created_by', user.id)
-    .maybeSingle();
+  const db = sql();
+  const clean = title.trim();
+  const rockStatus = status ?? 'on_track';
 
-  let rockId = existingRock?.id;
-  if (!rockId) {
-    const { data: newRock } = await supabase
-      .from('rocks')
-      .insert({ title: title.trim(), owner: owner ?? null, status: status ?? 'on_track', created_by: user.id })
-      .select('id')
-      .single();
-    rockId = newRock?.id;
+  // Create or find the team's top-level rock
+  let master = await one<{ id: string }>(
+    db`select id from rocks where team = ${meeting.team} and lower(title) = lower(${clean}) limit 1`
+  );
+  if (!master) {
+    master = await one<{ id: string }>(db`
+      insert into rocks (team, title, owner, status) values (${meeting.team}, ${clean}, ${owner ?? null}, ${rockStatus}) returning id
+    `);
+  } else {
+    await db`update rocks set status = ${rockStatus}, updated_at = now() where id = ${master.id} and status = 'planned'`;
   }
 
-  const { data: rock, error } = await supabase
-    .from('meeting_rocks')
-    .insert({
-      meeting_id: id,
-      rock_id: rockId ?? null,
-      title: title.trim(),
-      owner: owner ?? null,
-      status: status ?? 'on_track',
-      created_by: user.id,
-    })
-    .select('*')
-    .single();
-
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  return new Response(JSON.stringify({ rock }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const rock = await one(db`
+    insert into meeting_rocks (meeting_id, rock_id, title, owner, status)
+    values (${meeting.id}, ${master?.id ?? null}, ${clean}, ${owner ?? null}, ${rockStatus})
+    returning *
+  `);
+  return json({ rock });
 };

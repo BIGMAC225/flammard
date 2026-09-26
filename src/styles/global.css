@@ -2,103 +2,174 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Warm editorial theme shared with the firm's other tools: paper background,
+   white cards, brand blue for actions, brand green for "good", DM Sans body
+   with Fraunces for titles and big numbers. Fonts are loaded in Base.astro. */
+
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light;
   }
 
   html {
     scroll-behavior: smooth;
+    @apply bg-bg-base;
   }
 
   body {
-    @apply bg-bg-base text-ink-primary;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    @apply bg-bg-base text-ink-primary font-sans;
+    font-feature-settings: 'kern' 1, 'liga' 1, 'cv11' 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
+  input,
+  select,
+  textarea,
+  button {
+    font-family: inherit;
+  }
+
   ::selection {
-    background: rgba(123, 108, 246, 0.3);
-    color: #f0f0f5;
+    @apply bg-accent text-white;
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 10px;
+    height: 10px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+    @apply rounded-full bg-warm-300/70;
+    border: 3px solid transparent;
+    background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.18);
+    @apply bg-warm-400/80;
+    background-clip: padding-box;
   }
 }
 
 @layer components {
+  /* ── Typography ─────────────────────────────────────────────────────── */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted;
+  }
+  .page-title {
+    @apply font-display text-3xl font-semibold leading-[1.1] tracking-tight text-ink-primary md:text-4xl;
+  }
+  .page-subtitle {
+    @apply mt-2 max-w-2xl text-sm leading-relaxed text-ink-secondary md:text-[15px];
+  }
+  .section-title {
+    @apply font-display text-xl font-semibold leading-tight tracking-tight text-ink-primary;
+  }
+
+  /* ── Buttons ────────────────────────────────────────────────────────── */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all focus:outline-none focus:ring-2 focus:ring-accent-ring disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl font-semibold tracking-[-0.01em] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-primary {
-    @apply btn bg-accent hover:bg-accent-dim text-white px-5 py-2.5 text-sm;
+    @apply btn bg-accent hover:bg-accent-dim active:bg-blue-800 text-white shadow-soft px-5 py-2.5 text-sm;
+  }
+  .btn-accent {
+    @apply btn bg-mint-500 hover:bg-mint-400 active:bg-mint-600 text-mint-950 shadow-soft px-5 py-2.5 text-sm;
   }
   .btn-secondary {
-    @apply btn bg-bg-elevated hover:bg-line-strong text-ink-primary border border-line px-5 py-2.5 text-sm;
+    @apply btn bg-bg-surface hover:bg-bg-elevated text-ink-primary border border-line shadow-soft px-5 py-2.5 text-sm;
   }
   .btn-ghost {
-    @apply btn text-ink-secondary hover:text-ink-primary hover:bg-bg-elevated px-4 py-2 text-sm;
+    @apply btn text-ink-secondary hover:text-ink-primary hover:bg-bg-elevated px-4 py-2 text-sm rounded-lg;
   }
   .btn-danger {
-    @apply btn bg-state-danger/10 hover:bg-state-danger/20 text-state-danger border border-state-danger/20 px-5 py-2.5 text-sm;
+    @apply btn bg-red-50 hover:bg-red-100 text-red-800 border border-red-200 px-5 py-2.5 text-sm;
   }
 
+  /* ── Surfaces ───────────────────────────────────────────────────────── */
   .card {
-    @apply bg-bg-surface border border-line rounded-xl p-6;
+    @apply bg-bg-surface border border-line/70 rounded-2xl p-6 shadow-card;
+  }
+  .surface-inset {
+    @apply rounded-xl bg-bg-elevated/70;
+  }
+  /* Brand hero panel for the top of a report or dashboard */
+  .hero-panel {
+    @apply relative overflow-hidden rounded-3xl bg-accent px-8 py-7 text-white shadow-lift;
+    background-image:
+      radial-gradient(120% 140% at 100% 0%, rgba(31, 178, 90, 0.35) 0%, rgba(31, 178, 90, 0) 55%),
+      radial-gradient(90% 120% at 0% 100%, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 60%);
   }
 
+  /* ── Stat tiles ─────────────────────────────────────────────────────── */
+  .stat-tile {
+    @apply rounded-2xl border border-line/70 bg-bg-surface p-5 shadow-card;
+  }
+  .stat-tile-label {
+    @apply eyebrow;
+  }
+  .stat-tile-value {
+    @apply mt-2 font-display text-3xl font-semibold leading-none tracking-tight text-ink-primary tabular-nums;
+  }
+  .stat-tile-hint {
+    @apply mt-2 text-xs text-ink-muted;
+  }
+
+  /* ── Forms ──────────────────────────────────────────────────────────── */
   .input {
-    @apply w-full bg-bg-input border border-line rounded-lg px-3.5 py-2.5 text-sm text-ink-primary placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent transition-colors;
+    @apply w-full bg-bg-input border border-line rounded-xl px-3.5 py-2.5 text-sm text-ink-primary placeholder:text-ink-muted shadow-soft focus:outline-none focus:ring-2 focus:ring-accent-ring focus:border-accent transition-colors;
   }
-
   .label {
     @apply block text-sm font-medium text-ink-secondary mb-1.5;
   }
 
+  /* ── Tables ─────────────────────────────────────────────────────────── */
+  .table-brand {
+    @apply w-full border-collapse text-sm;
+  }
+  :where(.table-brand thead th) {
+    @apply eyebrow whitespace-nowrap bg-bg-elevated/80 px-4 py-2.5 text-left;
+  }
+  :where(.table-brand tbody td) {
+    @apply border-t border-line/70 px-4 py-3 text-[13px] text-ink-primary;
+  }
+  :where(.table-brand tbody tr:hover td) {
+    @apply bg-blue-50/60;
+  }
+
+  /* ── Badges ─────────────────────────────────────────────────────────── */
   .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium;
+    @apply inline-flex items-center rounded-full border border-transparent px-2.5 py-0.5 text-xs font-semibold leading-5;
   }
   .badge-approved {
-    @apply badge bg-state-success/15 text-state-success;
+    @apply badge bg-mint-100 text-mint-800;
   }
   .badge-rejected {
-    @apply badge bg-state-danger/15 text-state-danger;
+    @apply badge bg-red-100 text-red-800;
   }
   .badge-deferred {
-    @apply badge bg-state-warning/15 text-state-warning;
+    @apply badge bg-amber-100 text-amber-800;
   }
   .badge-noted {
-    @apply badge bg-accent-muted text-accent;
+    @apply badge bg-blue-50 text-blue-700;
   }
   .badge-open {
-    @apply badge bg-state-info/15 text-state-info;
+    @apply badge bg-blue-50 text-blue-700;
   }
   .badge-completed {
-    @apply badge bg-state-success/15 text-state-success;
+    @apply badge bg-mint-100 text-mint-800;
   }
   .badge-overdue {
-    @apply badge bg-state-danger/15 text-state-danger;
+    @apply badge bg-red-100 text-red-800;
   }
   .badge-draft {
     @apply badge bg-bg-elevated text-ink-secondary;
   }
   .badge-sealed {
-    @apply badge bg-accent-muted text-accent;
+    @apply badge bg-accent text-white;
   }
   .badge-distributed {
-    @apply badge bg-state-success/15 text-state-success;
+    @apply badge bg-mint-100 text-mint-800;
   }
 }

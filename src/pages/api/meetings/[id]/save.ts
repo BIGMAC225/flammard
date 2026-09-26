@@ -1,62 +1,36 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../../lib/supabase-server';
+import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { sql } from '../../../../lib/db';
 import type { Decision, ActionItem, DiscussionPoint } from '../../../../types';
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { data: { user } } = await supabase.auth.getUser();
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  const meeting = await getMeeting<{ id: string; status: string }>(params.id, 'id, status');
+  if (!meeting) return notFound();
 
-  const { id } = params;
-  const body = await request.json();
-  const { summary, decisions, actions, discussion } = body as {
+  const { summary, decisions, actions, discussion } = (await request.json()) as {
     summary: string;
     decisions: Decision[];
     actions: ActionItem[];
     discussion: DiscussionPoint[];
   };
 
-  const { data: meeting } = await supabase
-    .from('meetings')
-    .select('created_by, status')
-    .eq('id', id)
-    .single();
-
-  if (!meeting || meeting.created_by !== user.id) {
-    return new Response(JSON.stringify({ error: 'Forbidden' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
+  const db = sql();
   // Upsert — creates on first save, updates on subsequent saves
-  const { error } = await supabase
-    .from('minutes')
-    .upsert(
-      { meeting_id: id, summary, decisions, actions, discussion },
-      { onConflict: 'meeting_id' }
-    );
-
-  if (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  await db`
+    insert into minutes (meeting_id, summary, decisions, actions, discussion)
+    values (${meeting.id}, ${summary ?? null}, ${JSON.stringify(decisions ?? [])}::jsonb,
+            ${JSON.stringify(actions ?? [])}::jsonb, ${JSON.stringify(discussion ?? [])}::jsonb)
+    on conflict (meeting_id) do update set
+      summary = excluded.summary, decisions = excluded.decisions,
+      actions = excluded.actions, discussion = excluded.discussion, updated_at = now()
+  `;
 
   // Advance status to minutes_draft if still in draft
   if (meeting.status === 'draft') {
-    await supabase.from('meetings').update({ status: 'minutes_draft' }).eq('id', id);
+    await db`update meetings set status = 'minutes_draft', updated_at = now() where id = ${meeting.id}`;
   }
-
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return json({ ok: true });
 };

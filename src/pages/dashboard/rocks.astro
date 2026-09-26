@@ -1,19 +1,22 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
-import { createSupabaseServerClient } from '../../lib/supabase-server';
+import StepsPanel from '../../components/StepsPanel';
+import { many, sql } from '../../lib/db';
+import { stepsForMany } from '../../lib/steps';
+import { activateDueRocks } from '../../lib/roadmap';
+import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Rock } from '../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
+const team = currentTeam(Astro.cookies);
+await activateDueRocks(team);
+const rocks = await many<Rock>(
+  sql()`select *, due_date::text as due_date from rocks where team = ${team} order by status asc, created_at desc`
+);
 
-const { data: rocks } = await supabase
-  .from('rocks')
-  .select('*')
-  .eq('created_by', user!.id)
-  .order('status', { ascending: true })
-  .order('created_at', { ascending: false }) as { data: Rock[] | null };
+const stepsByRock = await stepsForMany('rock', rocks.filter((r) => r.status === 'on_track' || r.status === 'off_track').map((r) => r.id));
 
 const statusGroups = {
+  planned: rocks?.filter(r => r.status === 'planned') ?? [],
   on_track: rocks?.filter(r => r.status === 'on_track') ?? [],
   off_track: rocks?.filter(r => r.status === 'off_track') ?? [],
   complete: rocks?.filter(r => r.status === 'complete') ?? [],
@@ -26,6 +29,7 @@ const onTrackPct = totalActive > 0
   : null;
 
 const STATUS_LABELS = {
+  planned: 'Planned',
   on_track: 'On Track',
   off_track: 'Off Track',
   complete: 'Complete',
@@ -33,6 +37,7 @@ const STATUS_LABELS = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
+  planned: 'badge bg-bg-elevated text-ink-secondary',
   on_track: 'badge bg-state-success/15 text-state-success',
   off_track: 'badge bg-state-danger/15 text-state-danger',
   complete: 'badge bg-accent/15 text-accent',
@@ -40,19 +45,14 @@ const STATUS_COLORS: Record<string, string> = {
 };
 ---
 
-<Dashboard title="Rocks">
-  <div class="flex items-center justify-between mb-8">
-    <div>
-      <h1 class="text-2xl font-semibold text-ink-primary">Rocks</h1>
-      <p class="text-sm text-ink-secondary mt-1">Quarterly goals tracked across all meetings.</p>
+<Dashboard eyebrow={teamLabel(team)} title="Rocks" description="This team's rocks by status. The multi-year plan lives on the Roadmap.">
+  <a slot="actions" href="/dashboard/roadmap" class="btn-secondary text-sm">Roadmap →</a>
+  {onTrackPct !== null && (
+    <div slot="actions" class="text-right">
+      <div class="font-display text-3xl font-semibold tracking-tight text-ink-primary tabular-nums">{onTrackPct}%</div>
+      <div class="eyebrow">on track</div>
     </div>
-    {onTrackPct !== null && (
-      <div class="text-right">
-        <div class="text-3xl font-semibold text-ink-primary">{onTrackPct}%</div>
-        <div class="text-xs text-ink-muted">on track</div>
-      </div>
-    )}
-  </div>
+  )}
 
   <!-- Stats row -->
   {rocks && rocks.length > 0 && (
@@ -63,9 +63,9 @@ const STATUS_COLORS: Record<string, string> = {
         { label: 'Complete', val: statusGroups.complete.length, cls: 'text-accent' },
         { label: 'Dropped', val: statusGroups.dropped.length, cls: 'text-ink-muted' },
       ].map(({ label, val, cls }) => (
-        <div class="card py-4">
-          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
-          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">{label}</p>
+          <p class={`stat-tile-value ${cls}`}>{val}</p>
         </div>
       ))}
     </div>
@@ -79,7 +79,7 @@ const STATUS_COLORS: Record<string, string> = {
     </div>
   ) : (
     <div class="space-y-3">
-      {['on_track', 'off_track', 'complete', 'dropped'].map(status => {
+      {['on_track', 'off_track', 'planned', 'complete', 'dropped'].map(status => {
         const group = statusGroups[status as keyof typeof statusGroups];
         if (!group.length) return null;
         return (
@@ -88,7 +88,7 @@ const STATUS_COLORS: Record<string, string> = {
               {STATUS_LABELS[status as keyof typeof STATUS_LABELS]}
               <span class="ml-1.5 font-normal">({group.length})</span>
             </p>
-            <div class="border border-line rounded-xl overflow-hidden">
+            <div class="card p-0 overflow-hidden">
               {group.map((rock, i) => (
                 <div class={`flex items-center gap-4 px-5 py-4 ${i < group.length - 1 ? 'border-b border-line' : ''}`}>
                   <span class={STATUS_COLORS[rock.status]}>
@@ -101,6 +101,9 @@ const STATUS_COLORS: Record<string, string> = {
                       {rock.quarter && <p class="text-xs text-ink-muted">{rock.quarter}</p>}
                       {rock.due_date && <p class="text-xs text-ink-muted">Due {rock.due_date}</p>}
                     </div>
+                    {(rock.status === 'on_track' || rock.status === 'off_track') && (
+                      <StepsPanel type="rock" parentId={rock.id} parentTitle={rock.title} initialSteps={stepsByRock[rock.id] ?? []} client:visible />
+                    )}
                   </div>
                 </div>
               ))}

@@ -6,7 +6,7 @@ export type DecisionOutcome = 'approved' | 'rejected' | 'deferred' | 'noted';
 
 export type ActionStatus = 'open' | 'completed' | 'overdue';
 
-export type RockStatus = 'on_track' | 'off_track' | 'complete' | 'dropped';
+export type RockStatus = 'planned' | 'on_track' | 'off_track' | 'complete' | 'dropped';
 
 export type TodoStatus = 'open' | 'done' | 'not_done' | 'dropped';
 
@@ -42,9 +42,11 @@ export interface DiscussionPoint {
   notes: string;
 }
 
+export type TeamId = 'leadership' | 'management';
+
 export interface Meeting {
   id: string;
-  org_id: string | null;
+  team: TeamId;
   title: string;
   date: string;
   location: string | null;
@@ -52,11 +54,16 @@ export interface Meeting {
   input_type: InputType | null;
   transcript: string | null;
   recording_path: string | null;
+  recording_parts: number | null;
+  recording_mime: string | null;
+  transcript_path: string | null;
+  analysis: MeetingAnalysis | null;
+  analysis_status: AnalysisStatus;
+  analyzed_at: string | null;
   status: MeetingStatus;
   meeting_rating: number | null;
   conclude_notes: string | null;
   eos_analyzed: boolean;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -71,7 +78,6 @@ export interface Minutes {
   version: number;
   content_hash: string | null;
   sealed_at: string | null;
-  sealed_by: string | null;
   pdf_path: string | null;
   created_at: string;
   updated_at: string;
@@ -81,47 +87,32 @@ export interface Approval {
   id: string;
   minutes_id: string;
   approved_by: string;
-  approved_by_email: string;
   hash_at_approval: string;
   notes: string | null;
   approved_at: string;
 }
 
-export interface Distribution {
-  id: string;
-  minutes_id: string;
-  meeting_id: string;
-  recipient_email: string;
-  recipient_name: string | null;
-  token: string;
-  sent_at: string;
-  acknowledged_at: string | null;
-  acknowledged_ip: string | null;
-}
+// ── EOS Types ──────────────────────────────────────────────────────────────
 
-export interface AuditEvent {
+export interface Period {
   id: string;
-  meeting_id: string;
-  event_type: string;
-  actor_id: string | null;
-  actor_email: string | null;
-  payload: Record<string, unknown> | null;
-  prev_event_id: string | null;
-  event_hash: string;
+  team: TeamId;
+  name: string;
+  start_date: string;
+  end_date: string;
   created_at: string;
 }
 
-// ── EOS Types ──────────────────────────────────────────────────────────────
-
 export interface Rock {
   id: string;
+  team: TeamId;
+  period_id: string | null;
   title: string;
   owner: string | null;
   status: RockStatus;
   quarter: string | null;
   due_date: string | null;
   notes: string | null;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -134,7 +125,6 @@ export interface MeetingRock {
   owner: string | null;
   status: RockStatus;
   notes: string | null;
-  created_by: string;
   created_at: string;
 }
 
@@ -145,7 +135,6 @@ export interface Todo {
   owner: string | null;
   status: TodoStatus;
   resolved_meeting_id: string | null;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -159,21 +148,21 @@ export interface Issue {
   status: IssueStatus;
   resolution: string | null;
   resolved_in_meeting_id: string | null;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
 
 export interface ScorecardMetric {
   id: string;
+  team: TeamId;
   title: string;
   owner: string | null;
   goal: string | null;
   unit: string | null;
   frequency: 'weekly' | 'monthly' | 'quarterly';
+  description: string | null;
   sort_order: number;
   active: boolean;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -181,11 +170,12 @@ export interface ScorecardMetric {
 export interface ScorecardEntry {
   id: string;
   metric_id: string;
-  meeting_id: string;
+  period_date: string;
+  source: 'manual' | 'taxdome';
+  import_id: string | null;
   value: string | null;
   on_track: boolean | null;
   notes: string | null;
-  created_by: string;
   created_at: string;
 }
 
@@ -195,26 +185,83 @@ export interface Headline {
   type: HeadlineType;
   text: string;
   presenter: string | null;
-  created_by: string;
   created_at: string;
 }
 
-// ── EOS PDF Analysis Result ────────────────────────────────────────────────
+// ── Steps (breakdown of a to-do / issue / rock) ────────────────────────────
 
-export interface EOSAnalysisResult {
-  meeting_date: string | null;
-  meeting_title: string | null;
-  team_name: string | null;
-  attendees: Attendee[];
+export type StepParentType = 'todo' | 'issue' | 'rock';
+
+export interface Step {
+  id: string;
+  parent_type: StepParentType;
+  parent_id: string;
+  parent_step_id: string | null;
+  title: string;
+  done: boolean;
+  sort_order: number;
+  source: 'manual' | 'ai';
+  created_at: string;
+  updated_at: string;
+}
+
+/** What the roadmap importer proposes from a pasted/uploaded plan. */
+export interface ProposedRoadmap {
+  periods: Array<{
+    name: string;
+    start_date: string;
+    end_date: string;
+    rocks: Array<{ title: string; owner: string | null; notes: string | null; steps: ProposedStep[] }>;
+  }>;
+  unplaced: Array<{ title: string; owner: string | null; notes: string | null; steps: ProposedStep[] }>;
+}
+
+/** What the AI breakdown proposes, before anything is saved. */
+export interface ProposedStep {
+  title: string;
+  substeps: string[];
+}
+
+// ── Meeting session analysis (transcript → structured EOS data) ────────────
+
+export type AnalysisStatus = 'none' | 'ready' | 'committed';
+
+export interface MeetingAnalysis {
+  summary: string;
+  decisions: Decision[];
+  actions: ActionItem[];
+  discussion: DiscussionPoint[];
+  headlines: Array<{ type: HeadlineType; text: string; presenter: string | null }>;
+  rocks: Array<{ title: string; owner: string | null; status: RockStatus; notes: string | null }>;
+  todos_new: Array<{ title: string; owner: string | null }>;
+  todos_reviewed: Array<{ title: string; status: TodoStatus }>;
+  issues_new: Array<{ title: string; description: string | null; priority: IssuePriority }>;
+  issues_solved: Array<{ title: string; resolution: string | null }>;
   meeting_rating: number | null;
   conclude_notes: string | null;
-  headlines: Array<{ type: HeadlineType; text: string; presenter?: string }>;
-  cascading_messages: string[];
-  rocks: Array<{ title: string; owner?: string; status: RockStatus; notes?: string }>;
-  todos_new: Array<{ title: string; owner?: string }>;
-  todos_reviewed: Array<{ title: string; owner?: string; status: TodoStatus }>;
-  issues_solved: Array<{ title: string; resolution?: string }>;
-  issues_new: Array<{ title: string; description?: string; priority?: IssuePriority }>;
-  scorecard: Array<{ title: string; owner?: string; goal?: string; value?: string; on_track?: boolean }>;
-  summary: string;
+}
+
+// ── TaxDome report import ──────────────────────────────────────────────────
+
+export interface ScorecardExtraction {
+  report_title: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  values: Array<{ metric_id: string; value: string; on_track: boolean | null; notes: string | null }>;
+  unmatched: Array<{ label: string; value: string }>;
+}
+
+export interface TaxDomeImport {
+  id: string;
+  team: TeamId;
+  received_at: string;
+  file_name: string | null;
+  report_title: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  raw_text: string | null;
+  extracted: ScorecardExtraction | null;
+  status: 'processed' | 'failed';
+  error: string | null;
+  entries_written: number;
 }

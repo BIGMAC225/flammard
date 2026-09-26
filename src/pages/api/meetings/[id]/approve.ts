@@ -1,55 +1,46 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient, createServiceClient } from '../../../../lib/supabase-server';
+import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { many, one, sql } from '../../../../lib/db';
+import { minutesPdf } from '../../../../lib/blobs';
+import { TEAM_LABEL } from '../../../../lib/auth';
 import { hashMinutes } from '../../../../lib/crypto';
 import { generateMinutesPDF } from '../../../../lib/pdf';
-import type { Attendee } from '../../../../types';
+import type { PDFScorecardRow } from '../../../../lib/pdf';
+import type {
+  Attendee,
+  Headline,
+  Issue,
+  MeetingRock,
+  Minutes,
+  ScorecardEntry,
+  ScorecardMetric,
+  Todo,
+} from '../../../../types';
 
-export const POST: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+export const POST: APIRoute = async ({ params, cookies }) => {
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  const meeting = await getMeeting<{
+    id: string;
+    title: string;
+    date: string;
+    location: string | null;
+    attendees: Attendee[];
+    meeting_rating: number | null;
+    conclude_notes: string | null;
+    team: string;
+  }>(params.id, 'id, title, date::text as date, location, attendees, meeting_rating, conclude_notes, team');
+  if (!meeting) return notFound();
 
-  const { id } = params;
+  const db = sql();
+  const id = meeting.id;
 
-  // Load meeting + minutes
-  const { data: meeting } = await supabase
-    .from('meetings')
-    .select('id, title, date, location, attendees, created_by')
-    .eq('id', id)
-    .single();
-
-  if (!meeting || meeting.created_by !== user.id) {
-    return new Response(JSON.stringify({ error: 'Forbidden' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  const { data: minutes } = await supabase
-    .from('minutes')
-    .select('id, summary, decisions, actions, discussion')
-    .eq('meeting_id', id)
-    .single();
-
-  if (!minutes) {
-    return new Response(JSON.stringify({ error: 'No minutes to approve' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  const minutes = await one<Minutes>(db`select * from minutes where meeting_id = ${id}`);
+  if (!minutes) return json({ error: 'No minutes to approve' }, 400);
 
   const approvedAt = new Date().toISOString();
-  const approverEmail = user.email ?? user.id;
 
-  // Compute hash
   const hash = await hashMinutes({
     summary: minutes.summary,
     decisions: minutes.decisions,
@@ -57,54 +48,60 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     discussion: minutes.discussion,
   });
 
-  // Generate PDF
+  // EOS sections for this meeting, plus the latest scorecard value per
+  // metric as of the meeting date
+  const [headlines, rocks, todos, issues, metrics, entries] = await Promise.all([
+    many<Headline>(db`select * from headlines where meeting_id = ${id} order by created_at`),
+    many<MeetingRock>(db`select * from meeting_rocks where meeting_id = ${id} order by created_at`),
+    many<Todo>(db`select * from todos where meeting_id = ${id} order by created_at`),
+    many<Issue>(db`select * from issues where meeting_id = ${id} order by created_at`),
+    many<ScorecardMetric>(db`select * from scorecard_metrics where active and team = ${meeting.team} order by sort_order`),
+    many<ScorecardEntry>(db`
+      select distinct on (e.metric_id) e.*, e.period_date::text as period_date
+      from scorecard_entries e where e.period_date <= ${meeting.date}::date
+      order by e.metric_id, e.period_date desc
+    `),
+  ]);
+
+  const scorecard: PDFScorecardRow[] = metrics.flatMap((m) => {
+    const latest = entries.find((e) => e.metric_id === m.id);
+    if (!latest) return [];
+    return [{ title: m.title, goal: m.goal, value: latest.value, on_track: latest.on_track, period_date: latest.period_date }];
+  });
+
   const pdfBuffer = await generateMinutesPDF({
     title: meeting.title,
     date: meeting.date,
     location: meeting.location,
-    attendees: (meeting.attendees as Attendee[]) ?? [],
+    attendees: meeting.attendees ?? [],
     summary: minutes.summary,
     decisions: minutes.decisions,
     actions: minutes.actions,
     discussion: minutes.discussion,
     hash,
-    approvedBy: approverEmail,
+    approvedBy: TEAM_LABEL,
     approvedAt,
     appName: import.meta.env.PUBLIC_APP_NAME || 'Flammard',
+    eos: {
+      headlines,
+      scorecard,
+      rocks,
+      todos,
+      issues,
+      meetingRating: meeting.meeting_rating,
+      concludeNotes: meeting.conclude_notes,
+    },
   });
 
-  // Store PDF in Supabase Storage (service client bypasses storage RLS)
   const pdfPath = `minutes/${id}/${hash.slice(0, 8)}.pdf`;
-  const serviceClient = createServiceClient();
-  await serviceClient.storage.from('minutes-pdf').upload(pdfPath, pdfBuffer, {
-    contentType: 'application/pdf',
-    upsert: true,
-  });
+  await minutesPdf().set(pdfPath, new Blob([new Uint8Array(pdfBuffer)]), { metadata: { contentType: 'application/pdf' } });
 
-  // Seal the minutes
-  await supabase
-    .from('minutes')
-    .update({
-      content_hash: hash,
-      sealed_at: approvedAt,
-      sealed_by: user.id,
-      pdf_path: pdfPath,
-    })
-    .eq('id', minutes.id);
+  await db.transaction([
+    db`update minutes set content_hash = ${hash}, sealed_at = ${approvedAt}, pdf_path = ${pdfPath}, updated_at = now()
+       where id = ${minutes.id}`,
+    db`insert into approvals (minutes_id, approved_by, hash_at_approval) values (${minutes.id}, ${TEAM_LABEL}, ${hash})`,
+    db`update meetings set status = 'approved', updated_at = now() where id = ${id}`,
+  ]);
 
-  // Record approval
-  await supabase.from('approvals').insert({
-    minutes_id: minutes.id,
-    approved_by: user.id,
-    approved_by_email: approverEmail,
-    hash_at_approval: hash,
-  });
-
-  // Update meeting status
-  await supabase.from('meetings').update({ status: 'approved' }).eq('id', id);
-
-  return new Response(JSON.stringify({ hash, approvedAt }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return json({ hash, approvedAt });
 };

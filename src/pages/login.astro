@@ -1,19 +1,23 @@
 ---
 import Base from '../layouts/Base.astro';
-const appName = import.meta.env.PUBLIC_APP_NAME || 'Flammard';
+import { BRAND } from '../config/brand';
 const next = Astro.url.searchParams.get('next') ?? '/dashboard';
 ---
 
 <Base title="Sign in">
   <div class="min-h-screen flex items-center justify-center px-4 py-16">
-    <div class="w-full max-w-sm">
-      <p class="block text-center font-semibold text-ink-primary text-lg mb-8">{appName}</p>
+    <div class="w-full max-w-sm animate-fade-up">
+      <div class="flex items-center justify-center gap-2 mb-8">
+        <span class="w-2.5 h-2.5 rounded-full bg-mint-500"></span>
+        <p class="font-display font-semibold text-ink-primary text-xl tracking-tight">{BRAND.name}</p>
+      </div>
 
-      <div class="bg-bg-surface border border-line rounded-2xl p-8">
-        <h1 class="text-xl font-semibold text-ink-primary mb-1">Welcome back</h1>
-        <p class="text-sm text-ink-secondary mb-6">Sign in to your account</p>
+      <div class="card p-8">
+        <p class="eyebrow mb-2">Team sign-in</p>
+        <h1 class="font-display text-2xl font-semibold tracking-tight text-ink-primary mb-1">Welcome back</h1>
+        <p class="text-sm text-ink-secondary mb-6">{BRAND.tagline}</p>
 
-        <div id="error-msg" class="hidden mb-4 p-3 bg-state-danger/10 border border-state-danger/20 rounded-lg text-sm text-state-danger"></div>
+        <div id="error-msg" class="hidden mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-800"></div>
 
         <form id="login-form" class="space-y-4">
           <input type="hidden" name="next" value={next} />
