@@ -1,107 +1,99 @@
 import type { APIRoute } from 'astro';
 import { json, readBody } from '../../../lib/api';
-import { passwordMatches, startSession } from '../../../lib/auth';
-import { authStore } from '../../../lib/blobs';
+import { passwordMatches, sharedLoginEnabled, startPersonSession, startSharedSession } from '../../../lib/auth';
+import { one, sql } from '../../../lib/db';
+import { hashPassword, verifyPassword } from '../../../lib/password';
+import {
+  clearAttempts,
+  emailKey,
+  failDelay,
+  ipKey,
+  safeClientAddress,
+  tooManyAttempts,
+} from '../../../lib/throttle';
 
-// Single shared team password; see src/lib/auth.ts.
+// Sign-in (spec §3.2, §3.9).
+//   { email, password, next? }  person sign-in (email is case-insensitive)
+//   { password, next? }         the shared team password, while SHARED_PASSWORD_LOGIN isn't 'off'
 //
-// One password guards everything, so attempts are throttled per client:
-// each attempt is *reserved* in the counter before the password is checked
-// (a conditional write, so parallel requests can't all slip under the
-// limit), there's a delay on every miss, and a lock after MAX_FAILURES
-// within WINDOW. Note for a shared office IP: ten wrong guesses lock that
-// IP for 15 minutes for everyone behind it.
-const MAX_FAILURES = 10;
-const WINDOW_MS = 15 * 60 * 1000;
-const FAIL_DELAY_MS = 800;
+// Every attempt is reserved against the client IP (and, for a person sign-in,
+// the email) before the password is checked; see src/lib/throttle.ts. A wrong
+// password, an unknown email, an inactive person and a person with no password
+// all get the same message after the same work (a scrypt check against a
+// dummy hash) and the same delay.
 
-interface Failures {
-  count: number;
-  first: number;
-}
+const WRONG = 'Email or password is incorrect';
 
-// IPv6 clients get a whole /64, so count by prefix; IPv4 by address
-function ipv6Prefix(ip: string): string {
-  // expand "::" so the first four hextets are really the /64
-  const [head, tail = ''] = ip.split('::');
-  const h = head ? head.split(':') : [];
-  const t = tail ? tail.split(':') : [];
-  const groups = [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
-  return groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':');
-}
-
-function clientKey(request: Request, fallback: string | undefined): string {
-  const ip = request.headers.get('x-nf-client-connection-ip') ?? fallback ?? 'unknown';
-  const key = ip.includes(':') ? ipv6Prefix(ip) : ip;
-  return `login-attempts/${key.replace(/[^0-9a-f.:]/gi, '_')}`;
-}
-
-/**
- * Atomically bumps the attempt counter. Returns the count after this attempt,
- * or null if the store is unavailable (then we don't lock anyone out).
- */
-async function reserveAttempt(key: string): Promise<number | null> {
+/** Only ever redirect within this site. */
+function safeNext(next: unknown, origin: string): string {
+  if (typeof next !== 'string' || !next) return '/dashboard';
   try {
-    const store = authStore();
-    for (let i = 0; i < 4; i++) {
-      const current = await store.getWithMetadata(key, { type: 'json' });
-      const now = Date.now();
-      const prev = (current?.data as Failures | null) ?? null;
-      const fresh = !prev || now - prev.first > WINDOW_MS;
-      const next: Failures = fresh ? { count: 1, first: now } : { count: prev.count + 1, first: prev.first };
-      if (current && !current.etag) continue; // no etag → the write couldn't be conditional; re-read
-      const result = current
-        ? await store.setJSON(key, next, { onlyIfMatch: current.etag })
-        : await store.setJSON(key, next, { onlyIfNew: true });
-      if (result.modified) return next.count;
-      // someone else wrote in between — re-read and try again
+    const target = new URL(next, origin);
+    if (target.origin === origin && target.pathname.startsWith('/') && target.pathname !== '/login') {
+      return target.pathname + target.search;
     }
-    return MAX_FAILURES + 1; // couldn't reserve after retries: treat as too busy
   } catch {
-    return null;
+    /* keep default */
   }
+  return '/dashboard';
 }
 
-export const POST: APIRoute = async ({ request, cookies, clientAddress, url }) => {
-  const { password, next } = await readBody(request);
+export const POST: APIRoute = async (ctx) => {
+  const { request, cookies, url } = ctx;
+  const { email, password, next } = await readBody(request);
   if (typeof password !== 'string' || !password) return json({ error: 'Password is required' }, 400);
 
-  let address: string | undefined;
-  try {
-    address = clientAddress;
-  } catch {
-    address = undefined;
+  const personal = typeof email === 'string' && email.trim() !== '';
+  if (!personal && !sharedLoginEnabled()) {
+    return json({ error: 'The team password is turned off. Sign in with your email and password.' }, 403);
   }
-  const key = clientKey(request, address);
 
-  const attempts = await reserveAttempt(key);
-  if (attempts !== null && attempts > MAX_FAILURES) {
-    await new Promise((r) => setTimeout(r, FAIL_DELAY_MS));
+  const keys = [ipKey(request, safeClientAddress(ctx))];
+  if (personal) keys.push(emailKey(email));
+
+  if (await tooManyAttempts(keys)) {
+    await failDelay();
     return json({ error: 'Too many attempts. Try again in a few minutes.' }, 429);
   }
 
-  if (!passwordMatches(password)) {
-    await new Promise((r) => setTimeout(r, FAIL_DELAY_MS));
-    return json({ error: 'Incorrect password' }, 401);
-  }
+  const redirectTo = safeNext(next, url.origin);
 
-  // Success: the reservation counted against the window; clear it
-  try {
-    await authStore().delete(key);
-  } catch {
-    /* best effort */
-  }
-  startSession(cookies);
-
-  // Only ever redirect within this site
-  let redirectTo = '/dashboard';
-  if (typeof next === 'string') {
-    try {
-      const target = new URL(next, url.origin);
-      if (target.origin === url.origin && target.pathname.startsWith('/')) redirectTo = target.pathname + target.search;
-    } catch {
-      /* keep default */
+  if (!personal) {
+    if (!passwordMatches(password)) {
+      await failDelay();
+      return json({ error: 'Incorrect password' }, 401);
     }
+    await clearAttempts(keys);
+    startSharedSession(cookies);
+    return json({ next: redirectTo });
+  }
+
+  const person = await one<{ id: string; password_hash: string | null; session_version: number }>(
+    sql().query('select id, password_hash, session_version from people where email = $1 and active', [
+      email.trim().toLowerCase(),
+    ])
+  );
+  // Always runs scrypt (against a dummy hash when there's no real one); an
+  // over-long password is checked against the dummy too so it can't match.
+  const check = await verifyPassword(password.length > 200 ? '' : password, person?.password_hash ?? null);
+  if (!person || !check.ok || password.length > 200) {
+    await failDelay();
+    return json({ error: WRONG }, 401);
+  }
+
+  // Upgrade a hash made with older scrypt parameters
+  const newHash = check.needsRehash ? await hashPassword(password) : null;
+  await sql().query('update people set last_login_at = now(), password_hash = coalesce($2, password_hash) where id = $1', [
+    person.id,
+    newHash,
+  ]);
+  await clearAttempts(keys);
+
+  try {
+    startPersonSession(cookies, { id: person.id, session_version: person.session_version });
+  } catch (err) {
+    console.error('login: cannot start a person session', err);
+    return json({ error: 'Personal sign-in is not set up on this site yet (SESSION_SECRET is missing).' }, 500);
   }
   return json({ next: redirectTo });
 };
