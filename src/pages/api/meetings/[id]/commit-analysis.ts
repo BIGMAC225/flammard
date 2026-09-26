@@ -52,6 +52,8 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
        where resolved_meeting_id = ${id} and meeting_id <> ${id}`,
     db`update issues set status = 'open', resolution = null, resolved_in_meeting_id = null, updated_at = now()
        where resolved_in_meeting_id = ${id} and meeting_id <> ${id}`,
+    db`delete from steps where parent_type = 'todo' and parent_id in (select id from todos where meeting_id = ${id} and source = 'analysis')`,
+    db`delete from steps where parent_type = 'issue' and parent_id in (select id from issues where meeting_id = ${id} and source = 'analysis')`,
     db`delete from headlines where meeting_id = ${id} and source = 'analysis'`,
     db`delete from meeting_rocks where meeting_id = ${id} and source = 'analysis'`,
     db`delete from todos where meeting_id = ${id} and source = 'analysis'`,

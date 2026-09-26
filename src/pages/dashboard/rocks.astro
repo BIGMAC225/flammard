@@ -1,6 +1,8 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
+import StepsPanel from '../../components/StepsPanel';
 import { many, sql } from '../../lib/db';
+import { stepsForMany } from '../../lib/steps';
 import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Rock } from '../../types';
 
@@ -8,6 +10,8 @@ const team = currentTeam(Astro.cookies);
 const rocks = await many<Rock>(
   sql()`select *, due_date::text as due_date from rocks where team = ${team} order by status asc, created_at desc`
 );
+
+const stepsByRock = await stepsForMany('rock', rocks.filter((r) => r.status === 'on_track' || r.status === 'off_track').map((r) => r.id));
 
 const statusGroups = {
   on_track: rocks?.filter(r => r.status === 'on_track') ?? [],
@@ -91,6 +95,9 @@ const STATUS_COLORS: Record<string, string> = {
                       {rock.quarter && <p class="text-xs text-ink-muted">{rock.quarter}</p>}
                       {rock.due_date && <p class="text-xs text-ink-muted">Due {rock.due_date}</p>}
                     </div>
+                    {(rock.status === 'on_track' || rock.status === 'off_track') && (
+                      <StepsPanel type="rock" parentId={rock.id} parentTitle={rock.title} initialSteps={stepsByRock[rock.id] ?? []} client:visible />
+                    )}
                   </div>
                 </div>
               ))}

@@ -186,6 +186,24 @@ create table if not exists taxdome_imports (
   entries_written  integer not null default 0
 );
 
+-- ── Steps: break a to-do, issue or rock into smaller pieces ──────────────
+-- Two levels under the item (step → sub-step). Written by hand or by the
+-- AI breakdown; no FK to the parent because it can be any of three tables —
+-- the delete routes and analysis re-commits clean them up.
+create table if not exists steps (
+  id              uuid primary key default gen_random_uuid(),
+  parent_type     text not null check (parent_type in ('todo', 'issue', 'rock')),
+  parent_id       uuid not null,
+  parent_step_id  uuid references steps(id) on delete cascade,
+  title           text not null,
+  done            boolean not null default false,
+  sort_order      integer not null default 0,
+  source          text not null default 'manual' check (source in ('manual', 'ai')),
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+create index if not exists steps_parent_idx on steps(parent_type, parent_id);
+
 -- ── Upgrades for databases created by an earlier version of this file ─────
 -- (create table if not exists doesn't add columns to existing tables)
 alter table meeting_rocks add column if not exists source text not null default 'manual' check (source in ('manual', 'analysis'));

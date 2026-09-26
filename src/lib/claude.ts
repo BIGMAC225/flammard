@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { env } from './env';
-import type { MeetingAnalysis, ScorecardExtraction, ScorecardMetric } from '../types';
+import type { MeetingAnalysis, ProposedStep, ScorecardExtraction, ScorecardMetric } from '../types';
 
 const MODEL = 'claude-opus-5';
 
@@ -140,6 +140,63 @@ ${transcript}
       ...(a.due_date ? { due_date: a.due_date } : {}),
     })),
   };
+}
+
+// ── Break a to-do / issue / rock into steps ───────────────────────────────
+
+const BreakdownSchema = z.object({
+  steps: z.array(z.object({ title: z.string(), substeps: z.array(z.string()) })),
+});
+
+const DETAIL_GUIDE: Record<1 | 2 | 3, string> = {
+  1: '3–5 broad steps, no sub-steps. Each step is a meaningful chunk of work someone could own for a day or more.',
+  2: '4–8 concrete steps; add 2–4 sub-steps under a step only where it genuinely has parts. Each sub-step is a single sitting of work.',
+  3: 'A full checklist: 5–10 steps, most with 2–5 sub-steps down to individual actions (a call, an email, a file to open). Nothing left implicit.',
+};
+
+export async function breakDownItem(
+  item: {
+    kind: 'to-do' | 'issue' | 'rock';
+    title: string;
+    description: string | null;
+    owner: string | null;
+    team: string;
+    meeting: string | null;
+    existingSteps: string[];
+  },
+  detail: 1 | 2 | 3,
+  note: string | null
+): Promise<ProposedStep[]> {
+  const system = `You help a CPA firm's leadership and management teams turn EOS ${item.kind}s into concrete next steps. The firm does tax, accounting and advisory work. Write steps as short imperative sentences that the owner could start on today, in the order they should happen. Don't pad; don't restate the item as a step.`;
+
+  const lines = [
+    `${item.kind[0].toUpperCase() + item.kind.slice(1)}: ${item.title}`,
+    item.description ? `Details: ${item.description}` : '',
+    item.owner ? `Owner: ${item.owner}` : '',
+    `Team: ${item.team}`,
+    item.meeting ? `Raised in: ${item.meeting}` : '',
+    item.existingSteps.length
+      ? `\nSteps already listed (don't repeat these):\n${item.existingSteps.map((s) => `- ${s}`).join('\n')}`
+      : '',
+    note ? `\nExtra context from the owner: ${note}` : '',
+    `\nLevel of detail: ${DETAIL_GUIDE[detail]}`,
+  ];
+  const user = lines.filter(Boolean).join('\n');
+
+  const response = await client().messages.parse({
+    model: MODEL,
+    max_tokens: 4000,
+    output_config: { effort: 'low', format: zodOutputFormat(BreakdownSchema) },
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  if (response.stop_reason === 'refusal') throw new Error('The breakdown was declined by the model');
+  const parsed = response.parsed_output;
+  if (!parsed) throw new Error('Could not parse the breakdown response');
+  return parsed.steps
+    .map((s) => ({ title: s.title.trim(), substeps: s.substeps.map((x) => x.trim()).filter(Boolean) }))
+    .filter((s) => s.title);
 }
 
 // ── TaxDome report → scorecard values ─────────────────────────────────────

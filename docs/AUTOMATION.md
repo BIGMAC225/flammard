@@ -32,6 +32,10 @@ Notes:
 - **Check this on the first real meeting.** If analyses consistently fail while a shorter transcript works, Netlify is ending the function early; the fix is either raising the function timeout (Netlify support, paid plans) or moving the analysis to a Netlify Background Function — say so and it can be done.
 - Re-running the analysis after accepting and accepting again *replaces* the headlines, rock reviews, to-dos and issues that the earlier acceptance added to this meeting, so nothing is duplicated. Status changes made to older to-dos/issues are not reverted.
 
+## Breaking items down
+
+Every open to-do, issue and rock on its list page has a **Steps** section (click "Break it down"). Add steps and sub-steps by hand, tick them off, or pick a level of detail and click **Break down with AI** — Claude proposes steps (with sub-steps at the normal and detailed levels), you untick anything you don't want, and they're added. "Suggest more" on an item that already has steps avoids repeating them. Ticking a step ticks its sub-steps.
+
 ## 3. TaxDome → Zapier → Flammard
 
 ### In Flammard

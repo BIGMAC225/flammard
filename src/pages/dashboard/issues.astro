@@ -1,6 +1,8 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
+import StepsPanel from '../../components/StepsPanel';
 import { many, sql } from '../../lib/db';
+import { stepsForMany } from '../../lib/steps';
 import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Issue } from '../../types';
 
@@ -12,6 +14,7 @@ const rows = await many<Issue & { meeting_title: string; meeting_date: string }>
   order by i.status asc, case i.priority when 'high' then 0 when 'medium' then 1 else 2 end, i.created_at desc
 `);
 const issues = rows.map((i) => ({ ...i, meetings: { title: i.meeting_title, date: i.meeting_date } }));
+const stepsByIssue = await stepsForMany('issue', issues.filter((i) => i.status === 'open').map((i) => i.id));
 
 const open = issues?.filter(i => i.status === 'open') ?? [];
 const solved = issues?.filter(i => i.status === 'solved') ?? [];
@@ -80,6 +83,7 @@ const STATUS_COLORS: Record<string, string> = {
                       {issue.meetings.title} · {issue.meetings.date}
                     </a>
                   )}
+                  <StepsPanel type="issue" parentId={issue.id} parentTitle={issue.title} initialSteps={stepsByIssue[issue.id] ?? []} client:visible />
                 </div>
                 <span class="text-xs text-ink-muted capitalize flex-shrink-0">{issue.priority}</span>
               </div>

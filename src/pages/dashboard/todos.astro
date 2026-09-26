@@ -1,6 +1,8 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
+import StepsPanel from '../../components/StepsPanel';
 import { many, sql } from '../../lib/db';
+import { stepsForMany } from '../../lib/steps';
 import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Todo } from '../../types';
 
@@ -12,6 +14,7 @@ const rows = await many<Todo & { meeting_title: string; meeting_date: string }>(
   order by t.created_at desc
 `);
 const todos = rows.map((t) => ({ ...t, meetings: { title: t.meeting_title, date: t.meeting_date } }));
+const stepsByTodo = await stepsForMany('todo', todos.filter((t) => t.status !== 'done' && t.status !== 'dropped').map((t) => t.id));
 
 const open = todos?.filter(t => t.status === 'open') ?? [];
 const done = todos?.filter(t => t.status === 'done') ?? [];
@@ -84,6 +87,7 @@ const STATUS_LABELS: Record<string, string> = {
                       </a>
                     )}
                   </div>
+                  <StepsPanel type="todo" parentId={todo.id} parentTitle={todo.title} initialSteps={stepsByTodo[todo.id] ?? []} client:visible />
                 </div>
                 <span class={STATUS_COLORS['open']}>Open</span>
               </div>
@@ -104,6 +108,7 @@ const STATUS_LABELS: Record<string, string> = {
                 <div class="flex-1 min-w-0">
                   <p class="text-sm text-ink-secondary truncate">{todo.title}</p>
                   {todo.owner && <p class="text-xs text-ink-muted mt-0.5">{todo.owner}</p>}
+                  <StepsPanel type="todo" parentId={todo.id} parentTitle={todo.title} initialSteps={stepsByTodo[todo.id] ?? []} client:visible />
                 </div>
                 <span class={STATUS_COLORS['not_done']}>Not Done</span>
               </div>

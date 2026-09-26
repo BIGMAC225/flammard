@@ -22,6 +22,9 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
 export const DELETE: APIRoute = async ({ params, cookies }) => {
   const denied = requireAuth(cookies) ?? requireUuid(params.id);
   if (denied) return denied;
-  await sql()`delete from todos where id = ${params.id!}`;
+  await sql().transaction([
+    sql()`delete from steps where parent_type = 'todo' and parent_id = ${params.id!}`,
+    sql()`delete from todos where id = ${params.id!}`,
+  ]);
   return json({ ok: true });
 };

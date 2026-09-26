@@ -178,6 +178,29 @@ export interface Headline {
   created_at: string;
 }
 
+// ── Steps (breakdown of a to-do / issue / rock) ────────────────────────────
+
+export type StepParentType = 'todo' | 'issue' | 'rock';
+
+export interface Step {
+  id: string;
+  parent_type: StepParentType;
+  parent_id: string;
+  parent_step_id: string | null;
+  title: string;
+  done: boolean;
+  sort_order: number;
+  source: 'manual' | 'ai';
+  created_at: string;
+  updated_at: string;
+}
+
+/** What the AI breakdown proposes, before anything is saved. */
+export interface ProposedStep {
+  title: string;
+  substeps: string[];
+}
+
 // ── Meeting session analysis (transcript → structured EOS data) ────────────
 
 export type AnalysisStatus = 'none' | 'ready' | 'committed';
