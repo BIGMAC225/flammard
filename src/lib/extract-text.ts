@@ -9,7 +9,10 @@ const MAX_CHARS = 120_000;
 
 const decode = (s: string) =>
   s
-    .replace(/&#(x?)([0-9a-f]+);/gi, (_, x, n) => String.fromCodePoint(parseInt(n, x ? 16 : 10)))
+    .replace(/&#(x?)([0-9a-f]+);/gi, (m, x, n) => {
+      const cp = parseInt(n, x ? 16 : 10);
+      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    })
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
@@ -27,15 +30,45 @@ function xmlText(xml: string, tag: 'a:t' | 'w:t', paragraph: RegExp): string {
     .join('\n');
 }
 
-// Refuse to inflate anything a crafted zip declares as enormous
-async function readEntry(zip: JSZip, name: string, budget: { left: number }): Promise<string | null> {
+// Inflate with a byte budget. The declared size is a fast pre-check, but a
+// crafted zip can lie about it, so the bytes are counted as they stream and
+// the read is abandoned the moment the budget is exceeded.
+const TOO_BIG = 'That file is larger than expected once unpacked — paste the text instead';
+
+function readEntry(zip: JSZip, name: string, budget: { left: number }): Promise<string | null> {
   const entry = zip.file(name);
-  if (!entry) return null;
+  if (!entry) return Promise.resolve(null);
   const declared = (entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0;
-  if (declared > budget.left) throw new Error('That file is larger than expected once unpacked — paste the text instead');
-  const text = await entry.async('string');
-  budget.left -= text.length;
-  return text;
+  if (declared > budget.left) return Promise.reject(new Error(TOO_BIG));
+
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    // internalStream is public in JSZip 3.x but missing from its typings
+    const stream = (entry as unknown as { internalStream: (t: 'uint8array') => any }).internalStream('uint8array');
+    stream
+      .on('data', (chunk: Uint8Array) => {
+        size += chunk.length;
+        if (size > budget.left) {
+          stream.pause();
+          reject(new Error(TOO_BIG));
+          return;
+        }
+        chunks.push(chunk);
+      })
+      .on('error', reject)
+      .on('end', () => {
+        budget.left -= size;
+        const all = new Uint8Array(size);
+        let offset = 0;
+        for (const c of chunks) {
+          all.set(c, offset);
+          offset += c.length;
+        }
+        resolve(new TextDecoder().decode(all));
+      })
+      .resume();
+  });
 }
 
 /** Slide files in presentation order (presentation.xml → rels), else by number. */

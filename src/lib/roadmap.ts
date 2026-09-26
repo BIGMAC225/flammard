@@ -11,7 +11,8 @@ export async function activateDueRocks(team: TeamId): Promise<void> {
   await sql()`
     update rocks r set status = 'on_track', updated_at = now()
     from periods p
-    where r.period_id = p.id and r.team = ${team} and r.status = 'planned' and p.start_date <= ${todayLocal()}::date
+    where r.period_id = p.id and r.team = ${team} and r.status = 'planned'
+      and p.start_date <= ${todayLocal()}::date and p.end_date >= ${todayLocal()}::date
   `;
 }
 

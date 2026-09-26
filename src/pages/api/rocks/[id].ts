@@ -16,8 +16,11 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   if ('period_id' in body && body.period_id !== null && !isUuid(body.period_id)) return json({ error: 'Invalid period' }, 400);
   if ('due_date' in body && body.due_date !== null && !isIsoDate(body.due_date)) return json({ error: 'Invalid due date' }, 400);
   if (isUuid(body.period_id)) {
-    const ok = await one(sql()`select 1 from periods p join rocks r on r.team = p.team where p.id = ${body.period_id} and r.id = ${params.id!}`);
-    if (!ok) return json({ error: 'That period belongs to the other team' }, 400);
+    const rock = await one<{ team: string }>(sql()`select team from rocks where id = ${params.id!}`);
+    if (!rock) return json({ error: 'Not found' }, 404);
+    const period = await one<{ team: string }>(sql()`select team from periods where id = ${body.period_id}`);
+    if (!period) return json({ error: 'Period not found' }, 404);
+    if (period.team !== rock.team) return json({ error: 'That period belongs to the other team' }, 400);
   }
   for (const k of ['title', 'owner', 'notes', 'quarter'] as const) {
     if (typeof body[k] === 'string') body[k] = body[k].trim() || null;

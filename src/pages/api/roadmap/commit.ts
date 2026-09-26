@@ -10,10 +10,11 @@ import type { ProposedRoadmap } from '../../../types';
 type ProposedRock = ProposedRoadmap['unplaced'][number];
 
 // Saves a reviewed roadmap proposal in one transaction. Periods are matched
-// by name (existing ones reused); rocks are matched by title within the team
-// (an existing rock is moved onto the period instead of duplicated); steps
-// go under new rocks. Ids are generated here so everything can be sent as
-// a single batch — a big deck is one round trip, and a failure saves nothing.
+// by name (existing ones reused); a rock with the same title that is already
+// in that period, or has no period yet, is reused rather than duplicated
+// (a recurring title in a different period is a different rock); steps go
+// under new rocks. Ids are generated here so everything is one batch — a
+// big deck is one round trip, and a failure saves nothing.
 export const POST: APIRoute = async ({ request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
@@ -29,7 +30,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   const db = sql();
   const today = todayLocal();
 
-  // ── Resolve periods (few; create the missing ones) ──────────────────────
+  const queries: NeonQueryPromise<false, false, Record<string, any>[]>[] = [];
+
+  // ── Periods: existing by name, new ones join the batch ───────────────────
   const existingPeriods = await many<{ id: string; name: string; start_date: string; end_date: string }>(
     db`select id, name, start_date::text as start_date, end_date::text as end_date from periods where team = ${team}`
   );
@@ -38,39 +41,41 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   for (const p of periods) {
     const name = p.name.trim().slice(0, 120);
     if (periodByName.has(name.toLowerCase())) continue;
-    const created = await one<{ id: string; name: string; start_date: string; end_date: string }>(db`
-      insert into periods (team, name, start_date, end_date) values (${team}, ${name}, ${p.start_date}, ${p.end_date})
-      returning id, name, start_date::text as start_date, end_date::text as end_date
-    `);
-    if (created) {
-      periodByName.set(name.toLowerCase(), created);
-      periodsCreated++;
-    }
+    const id = randomUUID();
+    queries.push(db`insert into periods (id, team, name, start_date, end_date) values (${id}, ${team}, ${name}, ${p.start_date}, ${p.end_date})`);
+    periodByName.set(name.toLowerCase(), { id, name, start_date: p.start_date, end_date: p.end_date });
+    periodsCreated++;
   }
 
-  // ── Rocks + steps as one batch ──────────────────────────────────────────
-  const existingRocks = await many<{ id: string; title: string; status: string }>(db`select id, title, status from rocks where team = ${team}`);
-  const rockByTitle = new Map(existingRocks.map((r) => [r.title.trim().toLowerCase(), r]));
-  const queries: NeonQueryPromise<false, false, Record<string, any>[]>[] = [];
+  // ── Rocks + steps ───────────────────────────────────────────────────────
+  const existingRocks = await many<{ id: string; title: string; period_id: string | null }>(
+    db`select id, title, period_id from rocks where team = ${team}`
+  );
+  const rockKey = (periodId: string | null, title: string) => `${periodId ?? ''}|${title.toLowerCase()}`;
+  const rockByKey = new Map(existingRocks.map((r) => [rockKey(r.period_id, r.title.trim()), r.id]));
   let rocksCreated = 0;
   let rocksLinked = 0;
 
   const addRock = (r: ProposedRock, periodId: string | null, status: string) => {
     const title = r.title.trim().slice(0, 300);
-    const found = rockByTitle.get(title.toLowerCase());
-    if (found) {
-      // Already on the books: place it on the period; only nudge a planned status
+    // Same title in the same period (or import listed it twice): one rock
+    if (rockByKey.has(rockKey(periodId, title))) return;
+    // Same title with no period yet: this import places it
+    const unplacedId = periodId ? rockByKey.get(rockKey(null, title)) : undefined;
+    if (unplacedId) {
       queries.push(db`
-        update rocks set period_id = coalesce(${periodId}, period_id),
+        update rocks set period_id = ${periodId},
           status = case when status = 'planned' then ${status} else status end,
           owner = coalesce(owner, ${r.owner?.trim() || null}), notes = coalesce(notes, ${r.notes?.trim() || null}),
           updated_at = now()
-        where id = ${found.id}`);
+        where id = ${unplacedId}`);
+      rockByKey.delete(rockKey(null, title));
+      rockByKey.set(rockKey(periodId, title), unplacedId);
       rocksLinked++;
       return;
     }
     const rockId = randomUUID();
-    rockByTitle.set(title.toLowerCase(), { id: rockId, title, status });
+    rockByKey.set(rockKey(periodId, title), rockId);
     queries.push(db`
       insert into rocks (id, team, period_id, title, owner, notes, status)
       values (${rockId}, ${team}, ${periodId}, ${title}, ${r.owner?.trim() || null}, ${r.notes?.trim() || null}, ${status})`);
@@ -102,12 +107,13 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   }
   for (const r of unplaced) addRock(r, null, 'planned');
 
-  if (queries.length) {
-    try {
-      await db.transaction(queries);
-    } catch (err) {
-      return json({ error: `Nothing was saved: ${err instanceof Error ? err.message : 'unknown error'}` }, 500);
-    }
+  if (!queries.length) return json({ ok: true, periods: 0, rocks: 0, linked: 0, note: 'Everything in that plan is already on the roadmap' });
+  try {
+    await db.transaction(queries);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'unknown error';
+    if (/periods_team_name_key/.test(message)) return json({ error: 'Nothing was saved: a period with that name was just created — try again' }, 409);
+    return json({ error: `Nothing was saved: ${message}` }, 500);
   }
 
   return json({ ok: true, periods: periodsCreated, rocks: rocksCreated, linked: rocksLinked });

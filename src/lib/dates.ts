@@ -2,7 +2,17 @@ import { env } from './env';
 
 // The firm's local calendar date, not UTC — periods start and end on local
 // days, and a UTC rollover in the evening would misclassify them.
-export const TIMEZONE = env('PUBLIC_TIMEZONE') || 'America/Chicago';
+function validTimeZone(tz: string | undefined): string {
+  if (!tz) return 'America/Chicago';
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: tz });
+    return tz;
+  } catch {
+    return 'America/Chicago'; // a typo in PUBLIC_TIMEZONE must not take the site down
+  }
+}
+
+export const TIMEZONE = validTimeZone(env('PUBLIC_TIMEZONE'));
 
 export function todayLocal(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE }); // en-CA → YYYY-MM-DD

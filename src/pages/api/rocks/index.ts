@@ -21,8 +21,9 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   const team = currentTeam(cookies);
   const db = sql();
 
-  // Without an explicit status: planned if the period is ahead, on track if it's underway
-  let rockStatus = status ?? 'planned';
+  // Without an explicit status: planned if the period is ahead, on track if
+  // it's underway or the rock has no period (it's being worked now)
+  let rockStatus = status ?? 'on_track';
   if (period_id) {
     const period = await one<{ start_date: string; end_date: string }>(
       db`select start_date::text as start_date, end_date::text as end_date from periods where id = ${period_id} and team = ${team}`
