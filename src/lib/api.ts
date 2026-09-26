@@ -1,6 +1,8 @@
 import type { AstroCookies } from 'astro';
 import { isAuthenticated } from './auth';
 import { one, sql } from './db';
+import { can, type Permission } from './permissions';
+import type { Principal } from '../types';
 
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -49,3 +51,17 @@ export async function getMeeting<T = Record<string, any>>(
 
 /** Response for a request whose meeting id doesn't resolve. */
 export const notFound = (what = 'Meeting') => json({ error: `${what} not found` }, 404);
+
+// ── Principal and permissions (P0) ──────────────────────────────────────────
+
+/** The signed-in principal the middleware put on locals. Throws if it's missing. */
+export function principal(locals: App.Locals): Principal {
+  if (!locals.principal) throw new Error('No principal: the route is not behind the auth middleware');
+  return locals.principal;
+}
+
+/** 403 response when the principal lacks `perm` (401 if there's none), else null. */
+export function requirePermission(locals: App.Locals, perm: Permission): Response | null {
+  if (!locals.principal) return json({ error: 'Unauthorized' }, 401);
+  return can(locals.principal, perm) ? null : json({ error: "You don't have permission to do that" }, 403);
+}

@@ -103,16 +103,21 @@ export interface Period {
   created_at: string;
 }
 
+export type RockLevel = 'company' | 'individual';
+
 export interface Rock {
   id: string;
   team: TeamId;
   period_id: string | null;
   title: string;
   owner: string | null;
+  owner_id: string | null;
   status: RockStatus;
   quarter: string | null;
   due_date: string | null;
   notes: string | null;
+  level: RockLevel | null;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -123,6 +128,7 @@ export interface MeetingRock {
   rock_id: string | null;
   title: string;
   owner: string | null;
+  owner_id: string | null;
   status: RockStatus;
   notes: string | null;
   created_at: string;
@@ -134,7 +140,11 @@ export interface Todo {
   team: string;
   title: string;
   owner: string | null;
+  owner_id: string | null;
   status: TodoStatus;
+  due_date: string | null;
+  description: string | null;
+  completed_at: string | null;
   resolved_meeting_id: string | null;
   created_at: string;
   updated_at: string;
@@ -150,10 +160,13 @@ export interface Issue {
   rank: number | null;
   title: string;
   description: string | null;
+  owner: string | null;
+  owner_id: string | null;
   priority: IssuePriority;
   status: IssueStatus;
   resolution: string | null;
   resolved_in_meeting_id: string | null;
+  solved_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -163,6 +176,7 @@ export interface ScorecardMetric {
   team: TeamId;
   title: string;
   owner: string | null;
+  owner_id: string | null;
   goal: string | null;
   unit: string | null;
   frequency: 'weekly' | 'monthly' | 'quarterly';
@@ -177,7 +191,7 @@ export interface ScorecardEntry {
   id: string;
   metric_id: string;
   period_date: string;
-  source: 'manual' | 'taxdome';
+  source: 'manual' | 'taxdome' | 'import';
   import_id: string | null;
   value: string | null;
   on_track: boolean | null;
@@ -187,10 +201,13 @@ export interface ScorecardEntry {
 
 export interface Headline {
   id: string;
-  meeting_id: string;
+  meeting_id: string | null;
+  team: TeamId;
   type: HeadlineType;
   text: string;
+  description: string | null;
   presenter: string | null;
+  presenter_id: string | null;
   created_at: string;
 }
 
@@ -270,4 +287,71 @@ export interface TaxDomeImport {
   status: 'processed' | 'failed';
   error: string | null;
   entries_written: number;
+}
+
+// ── People, roles and company settings (P0) ────────────────────────────────
+
+export type Role = 'owner' | 'admin' | 'facilitator' | 'manager' | 'member' | 'observer';
+
+export interface Person {
+  id: string;
+  name: string;
+  email: string | null;
+  title: string | null;
+  role: Role;
+  teams: TeamId[];
+  aliases: string[];
+  active: boolean;
+  has_password: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The slim shape owner pickers need. */
+export interface PersonOption {
+  id: string;
+  name: string;
+  teams: TeamId[];
+  active: boolean;
+}
+
+/**
+ * Who is making a request: a signed-in person, or the shared team password
+ * (name = TEAM_LABEL, role = SHARED_LOGIN_ROLE, both teams). Set on
+ * `Astro.locals.principal` by the middleware.
+ */
+export type Principal =
+  | { kind: 'person'; id: string; name: string; email: string; role: Role; teams: TeamId[] }
+  | { kind: 'shared'; id: null; name: string; role: Role; teams: TeamId[] };
+
+export interface CompanySettings {
+  company_name: string;
+  /** 0 = Sunday … 6 = Saturday */
+  week_start: number;
+  timezone: string;
+  /** 'MM-DD', the same every year */
+  q1_start: string;
+  q2_start: string;
+  q3_start: string;
+  q4_start: string;
+  fiscal_year_named_by: 'start' | 'end';
+  email_domain: string | null;
+  recap_webhook_url: string | null;
+  /** The secret itself is never sent to the browser. */
+  recap_webhook_secret_set: boolean;
+  /** Owner names deliberately kept as text (no account), e.g. a consultant. */
+  text_only_owner_names: string[];
+  updated_at: string;
+}
+
+export interface ImportBatch {
+  id: string;
+  source: 'ninety';
+  file_names: string[];
+  counts: Record<string, number>;
+  status: 'committed' | 'undone';
+  created_by_name: string | null;
+  created_at: string;
+  undone_at: string | null;
 }
