@@ -1,12 +1,13 @@
 import type { APIRoute } from 'astro';
-import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { getMeeting, json, notFound, readBody, requireAuth } from '../../../../lib/api';
 import { sql } from '../../../../lib/db';
 import type { MeetingAnalysis } from '../../../../types';
 
 // Writes the reviewed (checkbox-filtered) analysis into the real tables in
 // one transaction. Committing again first undoes everything the previous
-// commit did — items added under this meeting, and older to-dos/issues it
-// closed — so accepting twice (or retrying after a failure) never duplicates.
+// commit did — rows it created (source = 'analysis') and older to-dos/issues
+// it closed — so accepting twice (or retrying after a failure) never
+// duplicates. Items added by hand on the EOS tab are left alone.
 //
 // Neon's HTTP driver only runs non-interactive transactions (every statement
 // is sent at once), so the find-or-create steps are single statements built
@@ -15,10 +16,28 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const meeting = await getMeeting<{ id: string; team: string }>(params.id, 'id, team');
+  const meeting = await getMeeting<{ id: string; team: string; status: string }>(params.id, 'id, team, status');
   if (!meeting) return notFound();
+  if (meeting.status === 'approved' || meeting.status === 'distributed') {
+    return json({ error: 'This meeting is approved and sealed; its record can no longer be changed' }, 409);
+  }
 
-  const a = (await request.json()) as MeetingAnalysis;
+  const body = await readBody(request);
+  const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+  const a: MeetingAnalysis = {
+    summary: typeof body.summary === 'string' ? body.summary : '',
+    decisions: list(body.decisions),
+    actions: list(body.actions),
+    discussion: list(body.discussion),
+    headlines: list(body.headlines),
+    rocks: list(body.rocks),
+    todos_new: list(body.todos_new),
+    todos_reviewed: list(body.todos_reviewed),
+    issues_new: list(body.issues_new),
+    issues_solved: list(body.issues_solved),
+    meeting_rating: typeof body.meeting_rating === 'number' ? body.meeting_rating : null,
+    conclude_notes: typeof body.conclude_notes === 'string' ? body.conclude_notes : null,
+  };
   const id = meeting.id;
   const team = meeting.team;
   const db = sql();
@@ -29,10 +48,10 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
        where resolved_meeting_id = ${id} and meeting_id <> ${id}`,
     db`update issues set status = 'open', resolution = null, resolved_in_meeting_id = null, updated_at = now()
        where resolved_in_meeting_id = ${id} and meeting_id <> ${id}`,
-    db`delete from headlines where meeting_id = ${id}`,
-    db`delete from meeting_rocks where meeting_id = ${id}`,
-    db`delete from todos where meeting_id = ${id}`,
-    db`delete from issues where meeting_id = ${id}`,
+    db`delete from headlines where meeting_id = ${id} and source = 'analysis'`,
+    db`delete from meeting_rocks where meeting_id = ${id} and source = 'analysis'`,
+    db`delete from todos where meeting_id = ${id} and source = 'analysis'`,
+    db`delete from issues where meeting_id = ${id} and source = 'analysis'`,
 
     // ── Minutes (left alone once sealed) ────────────────────────────────
     db`insert into minutes (meeting_id, summary, decisions, actions, discussion)
@@ -44,7 +63,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
 
     // ── Headlines ───────────────────────────────────────────────────────
     ...a.headlines.map(
-      (h) => db`insert into headlines (meeting_id, type, text, presenter) values (${id}, ${h.type}, ${h.text}, ${h.presenter})`
+      (h) => db`insert into headlines (meeting_id, type, text, presenter, source) values (${id}, ${h.type}, ${h.text}, ${h.presenter}, 'analysis')`
     ),
 
     // ── Rocks: update the team's master rock (or create it), then snapshot
@@ -60,13 +79,13 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
           select ${team}, ${r.title}, ${r.owner}, ${r.status}, ${r.notes}
           where not exists (select 1 from found) returning id
         )
-        insert into meeting_rocks (meeting_id, rock_id, title, owner, status, notes)
-        values (${id}, coalesce((select id from updated), (select id from created)), ${r.title}, ${r.owner}, ${r.status}, ${r.notes})`
+        insert into meeting_rocks (meeting_id, rock_id, title, owner, status, notes, source)
+        values (${id}, coalesce((select id from updated), (select id from created)), ${r.title}, ${r.owner}, ${r.status}, ${r.notes}, 'analysis')`
     ),
 
     // ── To-dos ──────────────────────────────────────────────────────────
     ...a.todos_new.map(
-      (t) => db`insert into todos (meeting_id, title, owner, status) values (${id}, ${t.title}, ${t.owner}, 'open')`
+      (t) => db`insert into todos (meeting_id, title, owner, status, source) values (${id}, ${t.title}, ${t.owner}, 'open', 'analysis')`
     ),
     ...a.todos_reviewed
       .filter((t) => t.status !== 'open')
@@ -75,15 +94,15 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
           update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now()
           where id = (
             select t.id from todos t join meetings m on m.id = t.meeting_id
-            where m.team = ${team} and t.status = 'open' and lower(t.title) = lower(${t.title}) limit 1
+            where m.team = ${team} and t.meeting_id <> ${id} and t.status = 'open' and lower(t.title) = lower(${t.title}) limit 1
           )`
       ),
 
     // ── Issues ──────────────────────────────────────────────────────────
     ...a.issues_new.map(
       (i) => db`
-        insert into issues (meeting_id, title, description, priority, status)
-        values (${id}, ${i.title}, ${i.description}, ${i.priority}, 'open')`
+        insert into issues (meeting_id, title, description, priority, status, source)
+        values (${id}, ${i.title}, ${i.description}, ${i.priority}, 'open', 'analysis')`
     ),
     ...a.issues_solved.map(
       (i) => db`
@@ -94,8 +113,8 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
             where m.team = ${team} and i.status = 'open' and lower(i.title) = lower(${i.title}) limit 1
           ) returning id
         )
-        insert into issues (meeting_id, title, resolution, status, resolved_in_meeting_id, priority)
-        select ${id}, ${i.title}, ${i.resolution}, 'solved', ${id}, 'medium'
+        insert into issues (meeting_id, title, resolution, status, resolved_in_meeting_id, priority, source)
+        select ${id}, ${i.title}, ${i.resolution}, 'solved', ${id}, 'medium', 'analysis'
         where not exists (select 1 from solved)`
     ),
 

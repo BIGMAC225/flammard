@@ -5,8 +5,12 @@ import { authStore } from '../../../lib/blobs';
 
 // Single shared team password; see src/lib/auth.ts.
 //
-// One password guards everything, so failed attempts are throttled per IP:
-// a short delay on every miss, and a lock after MAX_FAILURES within WINDOW.
+// One password guards everything, so attempts are throttled per client:
+// each attempt is *reserved* in the counter before the password is checked
+// (a conditional write, so parallel requests can't all slip under the
+// limit), there's a delay on every miss, and a lock after MAX_FAILURES
+// within WINDOW. Note for a shared office IP: ten wrong guesses lock that
+// IP for 15 minutes for everyone behind it.
 const MAX_FAILURES = 10;
 const WINDOW_MS = 15 * 60 * 1000;
 const FAIL_DELAY_MS = 800;
@@ -16,13 +20,35 @@ interface Failures {
   first: number;
 }
 
-async function readFailures(key: string): Promise<Failures> {
+// IPv6 clients get a whole /64, so count by prefix; IPv4 by address
+function clientKey(request: Request, fallback: string | undefined): string {
+  const ip = request.headers.get('x-nf-client-connection-ip') ?? fallback ?? 'unknown';
+  const key = ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;
+  return `login-attempts/${key.replace(/[^0-9a-f.:]/gi, '_')}`;
+}
+
+/**
+ * Atomically bumps the attempt counter. Returns the count after this attempt,
+ * or null if the store is unavailable (then we don't lock anyone out).
+ */
+async function reserveAttempt(key: string): Promise<number | null> {
   try {
-    const f = (await authStore().get(key, { type: 'json' })) as Failures | null;
-    if (!f || Date.now() - f.first > WINDOW_MS) return { count: 0, first: Date.now() };
-    return f;
+    const store = authStore();
+    for (let i = 0; i < 4; i++) {
+      const current = await store.getWithMetadata(key, { type: 'json' });
+      const now = Date.now();
+      const prev = (current?.data as Failures | null) ?? null;
+      const fresh = !prev || now - prev.first > WINDOW_MS;
+      const next: Failures = fresh ? { count: 1, first: now } : { count: prev.count + 1, first: prev.first };
+      const result = current
+        ? await store.setJSON(key, next, { onlyIfMatch: current.etag })
+        : await store.setJSON(key, next, { onlyIfNew: true });
+      if (result.modified) return next.count;
+      // someone else wrote in between — re-read and try again
+    }
+    return MAX_FAILURES + 1; // couldn't reserve after retries: treat as too busy
   } catch {
-    return { count: 0, first: Date.now() }; // throttle store unavailable — don't lock people out
+    return null;
   }
 }
 
@@ -30,22 +56,31 @@ export const POST: APIRoute = async ({ request, cookies, clientAddress, url }) =
   const { password, next } = await readBody(request);
   if (typeof password !== 'string' || !password) return json({ error: 'Password is required' }, 400);
 
-  const ip = request.headers.get('x-nf-client-connection-ip') ?? clientAddress ?? 'unknown';
-  const key = `login-failures/${ip.replace(/[^0-9a-f.:]/gi, '_')}`;
-  const failures = await readFailures(key);
-  if (failures.count >= MAX_FAILURES) {
+  let address: string | undefined;
+  try {
+    address = clientAddress;
+  } catch {
+    address = undefined;
+  }
+  const key = clientKey(request, address);
+
+  const attempts = await reserveAttempt(key);
+  if (attempts !== null && attempts > MAX_FAILURES) {
+    await new Promise((r) => setTimeout(r, FAIL_DELAY_MS));
     return json({ error: 'Too many attempts. Try again in a few minutes.' }, 429);
   }
 
   if (!passwordMatches(password)) {
-    await authStore()
-      .setJSON(key, { count: failures.count + 1, first: failures.first })
-      .catch(() => {});
     await new Promise((r) => setTimeout(r, FAIL_DELAY_MS));
     return json({ error: 'Incorrect password' }, 401);
   }
 
-  if (failures.count) await authStore().delete(key).catch(() => {});
+  // Success: the reservation counted against the window; clear it
+  try {
+    await authStore().delete(key);
+  } catch {
+    /* best effort */
+  }
   startSession(cookies);
 
   // Only ever redirect within this site

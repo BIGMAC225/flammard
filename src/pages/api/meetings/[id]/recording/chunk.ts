@@ -47,6 +47,7 @@ export const GET: APIRoute = async ({ params, cookies, url }) => {
   if (!data) return json({ error: `Chunk ${part} is missing` }, 404);
 
   return new Response(data, {
-    headers: { 'Content-Type': meeting.recording_mime ?? 'audio/webm', 'Cache-Control': 'private, max-age=3600' },
+    // no-store: the URL is the same across re-recordings, and audio shouldn't outlive a session
+    headers: { 'Content-Type': meeting.recording_mime ?? 'audio/webm', 'Cache-Control': 'private, no-store' },
   });
 };

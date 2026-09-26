@@ -19,10 +19,10 @@ Database, storage and sign-in are all on Netlify — see `docs/SETUP.md`. The tw
 On a meeting page the **Session** tab walks through three steps:
 
 1. **Start meeting** records from the microphone. Keep the tab open for the whole meeting. **End meeting** uploads the audio to Netlify Blobs in 4 MB chunks (a single serverless request is capped at 6 MB) and shows **Download audio for Vibe**.
-2. Open the downloaded file in [Vibe](https://thewh1teagle.github.io/vibe/), transcribe it, and export. Any of `.txt`, `.srt`, `.vtt` or `.json` works — drop it into step 2. (You can also paste text.)
+2. **One click, if the Vibe bridge is running on that computer** (`docs/VIBE.md`): *Transcribe with Vibe on this computer* streams the recording through Vibe and saves the transcript. Otherwise: open the downloaded file in [Vibe](https://thewh1teagle.github.io/vibe/), transcribe it, and export. Any of `.txt`, `.srt`, `.vtt` or `.json` works — drop it into step 2. (You can also paste text.)
    - Turn on **speaker diarization** in Vibe before transcribing: the exports then carry "Speaker 1 / Speaker 2" labels, which makes owner attribution for to-dos noticeably better.
    - Vibe can also record directly (microphone or system audio, for Zoom/Teams calls). If you'd rather do that, skip step 1 and just upload Vibe's export.
-   - Vibe ships a local `vibe-server` with an OpenAI-style HTTP API, but it doesn't send CORS headers, so the browser can't call it directly. That's why the hand-off is a file rather than a button.
+   - Vibe's local server sends no CORS headers, so the browser can't call it directly; the bridge script in `bridge/` adds that. Details in `docs/VIBE.md`.
 3. **Analyze transcript** sends it to Claude with the current rocks, open to-dos and open issues as context so misheard names line up with real items. It returns headlines, rock statuses, reviewed and new to-dos, solved and new issues, decisions, action items, discussion and a summary. Untick anything wrong and **Accept**. Everything ticked is written to the EOS sections and the minutes draft; you can still edit each item afterwards.
 
 Approving the minutes now includes the EOS sections and the scorecard (latest value per metric as of the meeting date) in the sealed PDF.

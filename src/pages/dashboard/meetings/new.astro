@@ -8,6 +8,6 @@ const team = currentTeam(Astro.cookies);
 
 <Dashboard eyebrow={teamLabel(team)} title="New meeting" description={`A ${teamLabel(team).toLowerCase()} meeting. Switch teams in the header to file it under the other team.`} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
   <div class="max-w-2xl">
-    <MeetingForm client:load />
+    <MeetingForm team={team} client:load />
   </div>
 </Dashboard>

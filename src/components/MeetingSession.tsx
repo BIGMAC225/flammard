@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { readStreamedJSON } from '../lib/stream-json';
+import { bridgeUrl, detectBridge, setBridgeUrl, transcribeWithBridge, type BridgeInfo } from '../lib/vibe-bridge';
 import AnalysisReview from './AnalysisReview';
 import type { AnalysisStatus, MeetingAnalysis } from '../types';
 
@@ -47,6 +48,13 @@ export default function MeetingSession(props: Props) {
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [downloadPct, setDownloadPct] = useState<number | null>(null);
 
+  // Local Vibe bridge (bridge/vibe-bridge.mjs) — one-click transcription
+  const [bridge, setBridge] = useState<BridgeInfo | null>(null);
+  const [bridgeChecked, setBridgeChecked] = useState(false);
+  const [bridgeSettings, setBridgeSettings] = useState(false);
+  const [bridgeUrlInput, setBridgeUrlInput] = useState('');
+  const [transcribing, setTranscribing] = useState<{ stage: string; pct: number | null } | null>(null);
+
   const [pasteMode, setPasteMode] = useState(false);
   const [pasted, setPasted] = useState('');
   const [savingTranscript, setSavingTranscript] = useState(false);
@@ -69,6 +77,15 @@ export default function MeetingSession(props: Props) {
     },
     []
   );
+
+  // Look for the bridge once on load; the button only shows when it answers
+  useEffect(() => {
+    setBridgeUrlInput(bridgeUrl());
+    void detectBridge().then((info) => {
+      setBridge(info);
+      setBridgeChecked(true);
+    });
+  }, []);
 
   // Don't let a tab close silently throw away an hour of audio
   useEffect(() => {
@@ -198,6 +215,61 @@ export default function MeetingSession(props: Props) {
       setError(err instanceof Error ? err.message : 'Download failed');
     } finally {
       setDownloadPct(null);
+    }
+  };
+
+  // Pulls the recording back down and pushes it through Vibe on this machine
+  const fetchRecordingBlob = async (onPct: (pct: number) => void): Promise<Blob> => {
+    const manifest = await fetch(`/api/meetings/${meetingId}/recording`);
+    if (!manifest.ok) throw new Error((await manifest.json()).error ?? 'No recording');
+    const { parts, mime } = (await manifest.json()) as { parts: number; mime: string };
+    const pieces: Blob[] = [];
+    for (let part = 0; part < parts; part++) {
+      const res = await fetch(`/api/meetings/${meetingId}/recording/chunk?part=${part}`);
+      if (!res.ok) throw new Error(`Could not read part ${part + 1} of ${parts}`);
+      pieces.push(await res.blob());
+      onPct(Math.round(((part + 1) / parts) * 100));
+    }
+    return new Blob(pieces, { type: mime });
+  };
+
+  const recheckBridge = async () => {
+    setBridgeUrl(bridgeUrlInput.trim());
+    const info = await detectBridge(3000);
+    setBridge(info);
+    setBridgeChecked(true);
+    if (!info) setError(`Nothing answered at ${bridgeUrl()}. Is the bridge running on this computer?`);
+    else setError('');
+  };
+
+  const transcribeLocally = async () => {
+    setError('');
+    setTranscribing({ stage: 'Fetching audio', pct: 0 });
+    try {
+      const info = (await detectBridge(3000)) ?? bridge;
+      if (!info) throw new Error('The Vibe bridge is not running on this computer');
+      if (!info.ok) throw new Error(info.error ?? 'Vibe is not ready');
+      const audio = await fetchRecordingBlob((pct) => setTranscribing({ stage: 'Fetching audio', pct }));
+      setTranscribing({ stage: 'Transcribing in Vibe', pct: 0 });
+      const text = await transcribeWithBridge(audio, info, (pct, segments) =>
+        setTranscribing((t) => ({ stage: `Transcribing in Vibe · ${segments} segments`, pct: pct >= 0 ? pct : (t?.pct ?? 0) }))
+      );
+      setTranscribing({ stage: 'Saving transcript', pct: 100 });
+      const res = await fetch(`/api/meetings/${meetingId}/transcript`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: text, source: 'vibe' }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Could not save transcript');
+      setHasTranscript(true);
+      setTranscriptInfo(`Transcribed in Vibe · ${json.length.toLocaleString()} characters`);
+      setAnalysis(null);
+      setAnalysisStatus('none');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Transcription failed');
+    } finally {
+      setTranscribing(null);
     }
   };
 
@@ -381,10 +453,40 @@ export default function MeetingSession(props: Props) {
 
       {/* ── Step 2: transcript ─────────────────────────── */}
       <section className="card">
-        {step(2, 'Add the Vibe transcript', hasTranscript)}
+        {step(2, 'Transcribe with Vibe', hasTranscript)}
         <p className="text-sm text-ink-secondary mt-1 mb-4 ml-[34px]">
-          Open the downloaded audio in Vibe, transcribe it, export as text (.txt, .srt, .vtt or .json) and drop it here.
+          {bridge?.ok
+            ? 'Vibe is running on this computer — one click sends the recording through it and brings the transcript back.'
+            : 'Open the downloaded audio in Vibe, transcribe it, export as text (.txt, .srt, .vtt or .json) and drop it here.'}
         </p>
+
+        {/* One-click path via the local bridge */}
+        {bridge?.ok && hasRecording && !transcribing && (
+          <div className="flex flex-wrap items-center gap-3 mb-4 ml-[34px]">
+            <button onClick={transcribeLocally} className="btn-primary text-sm">
+              {hasTranscript ? 'Transcribe again with Vibe' : 'Transcribe with Vibe on this computer'}
+            </button>
+            <span className="text-xs text-ink-muted">
+              {bridge.model}{bridge.diarizeModel ? ' · speaker labels on' : ''}
+            </span>
+          </div>
+        )}
+        {bridge && !bridge.ok && (
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4 ml-[34px]">
+            Bridge found, but {bridge.error}
+          </p>
+        )}
+        {transcribing && (
+          <div className="mb-4 ml-[34px] max-w-sm">
+            <p className="text-sm text-ink-secondary mb-2">
+              {transcribing.stage}{transcribing.pct != null ? ` · ${transcribing.pct}%` : ''}
+            </p>
+            <div className="h-1.5 rounded-full bg-bg-elevated overflow-hidden">
+              <div className="h-full bg-accent transition-all" style={{ width: `${transcribing.pct ?? 0}%` }} />
+            </div>
+            <p className="text-xs text-ink-muted mt-2">Runs on this computer's GPU — a full L10 takes a few minutes. Keep the tab open.</p>
+          </div>
+        )}
 
         {transcriptInfo && (
           <p className="text-xs text-ink-muted mb-3 ml-[34px]">
@@ -437,6 +539,37 @@ export default function MeetingSession(props: Props) {
             </div>
           </div>
         )}
+
+        {/* Bridge status / settings */}
+        <div className="mt-4 ml-[34px] text-xs text-ink-muted">
+          {bridgeChecked && !bridge && !bridgeSettings && (
+            <>
+              No Vibe bridge on this computer.{' '}
+              <button onClick={() => setBridgeSettings(true)} className="underline underline-offset-2 hover:text-ink-primary">
+                Set it up
+              </button>{' '}
+              for one-click transcription.
+            </>
+          )}
+          {bridge && !bridgeSettings && (
+            <button onClick={() => setBridgeSettings(true)} className="underline underline-offset-2 hover:text-ink-primary">
+              Bridge settings
+            </button>
+          )}
+          {bridgeSettings && (
+            <div className="border border-line rounded-xl p-3 bg-bg-elevated space-y-2 max-w-md">
+              <p className="text-ink-secondary">
+                Run <span className="font-mono">node bridge/vibe-bridge.mjs</span> from the Flammard folder on the meeting computer with Vibe open
+                (Settings → API &amp; Agents on). See <span className="font-mono">docs/VIBE.md</span>.
+              </p>
+              <div className="flex gap-2">
+                <input className="input text-xs" value={bridgeUrlInput} onChange={(e) => setBridgeUrlInput(e.target.value)} placeholder="http://127.0.0.1:47111" />
+                <button onClick={recheckBridge} className="btn-secondary text-xs whitespace-nowrap">Check</button>
+                <button onClick={() => setBridgeSettings(false)} className="btn-ghost text-xs">Close</button>
+              </div>
+            </div>
+          )}
+        </div>
       </section>
 
       {/* ── Step 3: analyze + review ───────────────────── */}

@@ -22,8 +22,9 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     fileName = file.name;
     text = transcriptToText(file.name, await file.text());
   } else {
-    const body = (await request.json()) as { transcript?: string };
+    const body = (await request.json()) as { transcript?: string; source?: string };
     text = (body.transcript ?? '').trim();
+    if (body.source === 'vibe') fileName = 'Transcribed in Vibe';
   }
 
   if (text.length < 20) return json({ error: 'Transcript is empty' }, 400);

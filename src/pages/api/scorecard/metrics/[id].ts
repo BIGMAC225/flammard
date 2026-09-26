@@ -16,6 +16,8 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
     if (key in body) clean[key] = typeof body[key] === 'string' ? body[key].trim() || null : body[key];
   }
   if ('title' in body && !clean.title) return json({ error: 'Title required' }, 400);
+  if ('active' in body && typeof clean.active !== 'boolean') return json({ error: 'Invalid active' }, 400);
+  if ('sort_order' in body && !Number.isInteger(clean.sort_order)) return json({ error: 'Invalid sort_order' }, 400);
 
   const update = buildUpdate('scorecard_metrics', params.id!, clean, EDITABLE, { updated_at: new Date() });
   if (!update) return json({ error: 'Nothing to update' }, 400);

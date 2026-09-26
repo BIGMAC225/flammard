@@ -80,7 +80,10 @@ create table if not exists rocks (
   updated_at  timestamptz not null default now()
 );
 
--- Rock review per meeting (snapshot of status at that meeting)
+-- Rock review per meeting (snapshot of status at that meeting).
+-- `source` on this and the next three tables: 'analysis' rows were created by
+-- accepting a transcript analysis and are replaced when it is accepted again;
+-- 'manual' rows (added on the EOS tab) are never touched by that.
 create table if not exists meeting_rocks (
   id          uuid primary key default gen_random_uuid(),
   meeting_id  uuid not null references meetings(id) on delete cascade,
@@ -90,6 +93,7 @@ create table if not exists meeting_rocks (
   status      text not null default 'on_track'
                 check (status in ('on_track', 'off_track', 'complete', 'dropped')),
   notes       text,
+  source      text not null default 'manual' check (source in ('manual', 'analysis')),
   created_at  timestamptz not null default now()
 );
 
@@ -101,6 +105,7 @@ create table if not exists todos (
   status               text not null default 'open'
                          check (status in ('open', 'done', 'not_done', 'dropped')),
   resolved_meeting_id  uuid references meetings(id) on delete set null,
+  source               text not null default 'manual' check (source in ('manual', 'analysis')),
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now()
 );
@@ -116,6 +121,7 @@ create table if not exists issues (
                             check (status in ('open', 'solved', 'dropped')),
   resolution              text,
   resolved_in_meeting_id  uuid references meetings(id) on delete set null,
+  source                  text not null default 'manual' check (source in ('manual', 'analysis')),
   created_at              timestamptz not null default now(),
   updated_at              timestamptz not null default now()
 );
@@ -127,6 +133,7 @@ create table if not exists headlines (
                 check (type in ('customer', 'employee', 'general')),
   text        text not null,
   presenter   text,
+  source      text not null default 'manual' check (source in ('manual', 'analysis')),
   created_at  timestamptz not null default now()
 );
 

@@ -1,13 +1,16 @@
 import type { APIRoute } from 'astro';
-import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { getMeeting, json, notFound, readBody, requireAuth, requireEnum } from '../../../../lib/api';
 import { one, sql } from '../../../../lib/db';
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const { title, owner, status } = await request.json();
-  if (!title?.trim()) return json({ error: 'Title required' }, 400);
+  const body = await readBody(request);
+  const { title, owner, status } = body;
+  if (typeof title !== 'string' || !title.trim()) return json({ error: 'Title required' }, 400);
+  const invalid = requireEnum(body, 'status', ['on_track', 'off_track', 'complete', 'dropped']);
+  if (invalid) return invalid;
 
   const meeting = await getMeeting<{ id: string; team: string }>(params.id, 'id, team');
   if (!meeting) return notFound();

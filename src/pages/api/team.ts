@@ -10,6 +10,13 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
   const team = url.searchParams.get('set');
   if (isTeam(team)) setTeam(cookies, team);
 
-  const next = url.searchParams.get('next') ?? '/dashboard';
-  return redirect(next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard');
+  // Only ever redirect within this site
+  let to = '/dashboard';
+  try {
+    const target = new URL(url.searchParams.get('next') ?? '/dashboard', url.origin);
+    if (target.origin === url.origin) to = target.pathname + target.search;
+  } catch {
+    /* keep default */
+  }
+  return redirect(to);
 };

@@ -5,7 +5,7 @@ interface MeetingFormProps {
   onCreated?: (id: string) => void;
 }
 
-export default function MeetingForm({ onCreated }: MeetingFormProps) {
+export default function MeetingForm({ onCreated, team }: MeetingFormProps & { team?: string }) {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [location, setLocation] = useState('');
@@ -31,7 +31,7 @@ export default function MeetingForm({ onCreated }: MeetingFormProps) {
     const res = await fetch('/api/meetings/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: title.trim(), date, location: location.trim(), attendees: clean }),
+      body: JSON.stringify({ title: title.trim(), date, location: location.trim(), attendees: clean, team }),
     });
 
     const json = await res.json();

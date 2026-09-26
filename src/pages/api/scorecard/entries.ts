@@ -1,5 +1,8 @@
 import type { APIRoute } from 'astro';
-import { isUuid, json, requireAuth } from '../../../lib/api';
+import { isUuid, json, readBody, requireAuth } from '../../../lib/api';
+
+const isIsoDate = (v: unknown): v is string =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().startsWith(v);
 import { one, sql } from '../../../lib/db';
 
 // Manual scorecard entry for a period (upserts on metric + period).
@@ -7,16 +10,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const { metric_id, period_date, value, on_track, notes } = (await request.json()) as {
-    metric_id?: string;
-    period_date?: string;
-    value?: string;
-    on_track?: boolean | null;
-    notes?: string;
-  };
-  if (!isUuid(metric_id) || !period_date || !/^\d{4}-\d{2}-\d{2}$/.test(period_date)) {
-    return json({ error: 'Metric and period are required' }, 400);
-  }
+  const { metric_id, period_date, value, on_track, notes } = await readBody(request);
+  if (!isUuid(metric_id) || !isIsoDate(period_date)) return json({ error: 'Metric and a valid period date are required' }, 400);
 
   const entry = await one(sql()`
     insert into scorecard_entries (metric_id, period_date, value, on_track, notes, source)
@@ -32,7 +27,7 @@ export const DELETE: APIRoute = async ({ request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const { id } = (await request.json()) as { id?: string };
+  const { id } = await readBody(request);
   if (!isUuid(id)) return json({ error: 'Entry id required' }, 400);
 
   const rows = await sql()`delete from scorecard_entries where id = ${id} returning id`;
