@@ -1,13 +1,10 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import { json, requireAuth } from '../../../lib/api';
+import { sql } from '../../../lib/db';
 
-export const DELETE: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-
-  const { id } = params;
-  const { error } = await supabase.from('headlines').delete().eq('id', id).eq('created_by', user.id);
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+export const DELETE: APIRoute = async ({ params, cookies }) => {
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
+  await sql()`delete from headlines where id = ${params.id!}`;
+  return json({ ok: true });
 };

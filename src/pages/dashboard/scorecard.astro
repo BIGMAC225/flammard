@@ -1,28 +1,21 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
 import ScorecardManager from '../../components/ScorecardManager';
-import { createSupabaseServerClient } from '../../lib/supabase-server';
+import { many, sql } from '../../lib/db';
 import type { ScorecardEntry, ScorecardMetric, TaxDomeImport } from '../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-
-const [{ data: metrics }, { data: entries }, { data: imports }] = await Promise.all([
-  supabase.from('scorecard_metrics').select('*').eq('active', true).order('sort_order').order('created_at'),
-  supabase
-    .from('scorecard_entries')
-    .select('*')
-    .not('period_date', 'is', null)
-    .order('period_date', { ascending: false })
-    .limit(500),
-  supabase.from('taxdome_imports').select('*').order('received_at', { ascending: false }).limit(10),
+const db = sql();
+const [typedMetrics, typedEntries, typedImports] = await Promise.all([
+  many<ScorecardMetric>(db`select * from scorecard_metrics where active order by sort_order, created_at`),
+  many<ScorecardEntry>(db`select e.*, e.period_date::text as period_date from scorecard_entries e order by e.period_date desc limit 500`),
+  many<TaxDomeImport>(db`
+    select *, period_start::text as period_start, period_end::text as period_end
+    from taxdome_imports order by received_at desc limit 10
+  `),
 ]);
 
-const typedMetrics = (metrics ?? []) as ScorecardMetric[];
-const typedEntries = (entries ?? []) as ScorecardEntry[];
-const typedImports = (imports ?? []) as TaxDomeImport[];
-
 // Most recent 8 reporting periods that have any data
-const periods = [...new Set(typedEntries.map((e) => e.period_date!))].slice(0, 8);
+const periods = [...new Set(typedEntries.map((e) => e.period_date))].slice(0, 8);
 
 const webhookUrl = `${import.meta.env.PUBLIC_APP_URL || Astro.url.origin}/api/integrations/taxdome`;
 ---

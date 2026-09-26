@@ -7,25 +7,18 @@ Two automated flows feed Flammard:
 
 ## 1. One-time setup
 
-### Database
-
-Run `supabase/migrations/003_automation.sql` in the Supabase SQL editor. It adds the session columns on `meetings`, the `taxdome_imports` table, period-based scorecard entries, and the `recordings` storage bucket with its policies.
-
-### Environment variables (Netlify → Site settings → Environment variables)
+Database, storage and sign-in are all on Netlify — see `docs/SETUP.md`. The two extra variables these flows need:
 
 | Variable | Purpose |
 |---|---|
 | `ANTHROPIC_API_KEY` | Transcript analysis and report extraction. Create at console.anthropic.com. |
 | `TAXDOME_WEBHOOK_SECRET` | Shared secret Zapier sends with each report. Generate with `openssl rand -hex 32`. |
-| `PUBLIC_APP_URL` | Your site URL, e.g. `https://flammard.netlify.app`. Shown on the Scorecard page as the webhook URL. |
-
-Redeploy after adding them.
 
 ## 2. Meeting session flow
 
 On a meeting page the **Session** tab walks through three steps:
 
-1. **Start meeting** records from the microphone. Keep the tab open for the whole meeting. **End meeting** uploads the audio straight to Supabase Storage (bypassing the serverless size limit) and shows **Download audio for Vibe**.
+1. **Start meeting** records from the microphone. Keep the tab open for the whole meeting. **End meeting** uploads the audio to Netlify Blobs in 4 MB chunks (a single serverless request is capped at 6 MB) and shows **Download audio for Vibe**.
 2. Open the downloaded file in [Vibe](https://thewh1teagle.github.io/vibe/), transcribe it, and export. Any of `.txt`, `.srt`, `.vtt` or `.json` works — drop it into step 2. (You can also paste text.)
    - Turn on **speaker diarization** in Vibe before transcribing: the exports then carry "Speaker 1 / Speaker 2" labels, which makes owner attribution for to-dos noticeably better.
    - Vibe can also record directly (microphone or system audio, for Zoom/Teams calls). If you'd rather do that, skip step 1 and just upload Vibe's export.

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { createClient } from '../lib/supabase';
 import { readStreamedJSON } from '../lib/stream-json';
 import AnalysisReview from './AnalysisReview';
 import type { AnalysisStatus, MeetingAnalysis } from '../types';
@@ -20,6 +19,9 @@ const MIME_CANDIDATES: Array<[string, string]> = [
   ['audio/webm', 'webm'],
   ['audio/mp4', 'm4a'],
 ];
+
+// Serverless request bodies are capped at 6 MB, so the audio goes up in pieces
+const CHUNK_BYTES = 4 * 1024 * 1024;
 
 const formatTime = (s: number) =>
   `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -122,25 +124,35 @@ export default function MeetingSession(props: Props) {
     setRecording(false);
   };
 
-  // Uploads go straight to Supabase Storage — a long meeting is far larger
-  // than a serverless request body allows.
+  // Uploads the audio in ≤4 MB chunks, then finalises so the server can
+  // verify every piece landed before recording it on the meeting.
   const uploadRecording = async (blob: Blob) => {
     setUploading(true);
     setUploadPct(0);
     setError('');
     try {
-      const supabase = createClient();
-      const path = `${meetingId}/${Date.now()}.${extRef.current}`;
-      const { error: upErr } = await supabase.storage
-        .from('recordings')
-        .upload(path, blob, { contentType: blob.type || 'audio/webm' });
-      if (upErr) throw new Error(upErr.message);
-      setUploadPct(100);
+      const upload = String(Date.now());
+      const parts = Math.max(1, Math.ceil(blob.size / CHUNK_BYTES));
+      for (let part = 0; part < parts; part++) {
+        const piece = blob.slice(part * CHUNK_BYTES, (part + 1) * CHUNK_BYTES);
+        let attempt = 0;
+        for (;;) {
+          const res = await fetch(`/api/meetings/${meetingId}/recording/chunk?upload=${upload}&part=${part}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: piece,
+          }).catch(() => null);
+          if (res?.ok) break;
+          if (++attempt >= 3) throw new Error(`Upload failed on part ${part + 1} of ${parts}`);
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+        setUploadPct(Math.round(((part + 1) / parts) * 100));
+      }
 
       const res = await fetch(`/api/meetings/${meetingId}/recording`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
+        body: JSON.stringify({ upload, parts, mime: blob.type || 'audio/webm' }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? 'Could not save recording');
       setHasRecording(true);
@@ -326,9 +338,12 @@ export default function MeetingSession(props: Props) {
             </div>
           )}
           {uploading && (
-            <p className="text-sm text-ink-secondary">
-              Saving recording{uploadPct === 100 ? '…' : ' — uploading audio…'}
-            </p>
+            <div className="w-full max-w-xs text-center">
+              <p className="text-sm text-ink-secondary mb-2">Saving recording… {uploadPct ?? 0}%</p>
+              <div className="h-1.5 rounded-full bg-bg-elevated overflow-hidden">
+                <div className="h-full bg-accent transition-all" style={{ width: `${uploadPct ?? 0}%` }} />
+              </div>
+            </div>
           )}
         </div>
       </section>

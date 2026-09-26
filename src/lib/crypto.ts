@@ -31,14 +31,3 @@ export function canonicalMinutesContent(content: {
 export async function hashMinutes(content: Parameters<typeof canonicalMinutesContent>[0]): Promise<string> {
   return sha256(canonicalMinutesContent(content));
 }
-
-export async function hashAuditEvent(event: {
-  meeting_id: string;
-  event_type: string;
-  actor_email: string | null;
-  payload: unknown;
-  prev_event_hash: string | null;
-  timestamp: string;
-}): Promise<string> {
-  return sha256(JSON.stringify(event, null, 0));
-}

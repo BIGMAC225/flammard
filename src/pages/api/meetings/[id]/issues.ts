@@ -1,31 +1,21 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../../lib/supabase-server';
+import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { one, sql } from '../../../../lib/db';
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  const { id } = params;
   const { title, description, priority } = await request.json();
-  if (!title?.trim()) return new Response(JSON.stringify({ error: 'Title required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  if (!title?.trim()) return json({ error: 'Title required' }, 400);
 
-  const { data: meeting } = await supabase.from('meetings').select('id').eq('id', id).eq('created_by', user.id).single();
-  if (!meeting) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  const meeting = await getMeeting(params.id, 'id');
+  if (!meeting) return notFound();
 
-  const { data: issue, error } = await supabase
-    .from('issues')
-    .insert({
-      meeting_id: id,
-      title: title.trim(),
-      description: description ?? null,
-      priority: priority ?? 'medium',
-      status: 'open',
-      created_by: user.id,
-    })
-    .select('*')
-    .single();
-
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  return new Response(JSON.stringify({ issue }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const issue = await one(sql()`
+    insert into issues (meeting_id, title, description, priority, status)
+    values (${meeting.id}, ${title.trim()}, ${description ?? null}, ${priority ?? 'medium'}, 'open')
+    returning *
+  `);
+  return json({ issue });
 };

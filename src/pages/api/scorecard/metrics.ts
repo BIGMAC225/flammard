@@ -1,35 +1,25 @@
 import type { APIRoute } from 'astro';
-import { json, requireUser } from '../../../lib/api';
+import { json, requireAuth } from '../../../lib/api';
+import { one, sql } from '../../../lib/db';
 
 const FREQUENCIES = ['weekly', 'monthly', 'quarterly'];
 
 export const POST: APIRoute = async ({ request, cookies }) => {
-  const { supabase, user, response } = await requireUser(request, cookies);
-  if (response) return response;
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
   const body = await request.json();
   const title = (body.title ?? '').trim();
   if (!title) return json({ error: 'Title required' }, 400);
 
-  const { count } = await supabase
-    .from('scorecard_metrics')
-    .select('id', { count: 'exact', head: true });
-
-  const { data: metric, error } = await supabase
-    .from('scorecard_metrics')
-    .insert({
-      title,
-      owner: body.owner?.trim() || null,
-      goal: body.goal?.trim() || null,
-      unit: body.unit?.trim() || null,
-      description: body.description?.trim() || null,
-      frequency: FREQUENCIES.includes(body.frequency) ? body.frequency : 'weekly',
-      sort_order: count ?? 0,
-      created_by: user.id,
-    })
-    .select('*')
-    .single();
-
-  if (error) return json({ error: error.message }, 500);
+  const metric = await one(sql()`
+    insert into scorecard_metrics (title, owner, goal, unit, description, frequency, sort_order)
+    values (
+      ${title}, ${body.owner?.trim() || null}, ${body.goal?.trim() || null}, ${body.unit?.trim() || null},
+      ${body.description?.trim() || null}, ${FREQUENCIES.includes(body.frequency) ? body.frequency : 'weekly'},
+      (select count(*) from scorecard_metrics)
+    )
+    returning *
+  `);
   return json({ metric });
 };

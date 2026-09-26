@@ -52,6 +52,8 @@ export interface Meeting {
   input_type: InputType | null;
   transcript: string | null;
   recording_path: string | null;
+  recording_parts: number | null;
+  recording_mime: string | null;
   transcript_path: string | null;
   analysis: MeetingAnalysis | null;
   analysis_status: AnalysisStatus;
@@ -60,7 +62,6 @@ export interface Meeting {
   meeting_rating: number | null;
   conclude_notes: string | null;
   eos_analyzed: boolean;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -75,7 +76,6 @@ export interface Minutes {
   version: number;
   content_hash: string | null;
   sealed_at: string | null;
-  sealed_by: string | null;
   pdf_path: string | null;
   created_at: string;
   updated_at: string;
@@ -85,34 +85,9 @@ export interface Approval {
   id: string;
   minutes_id: string;
   approved_by: string;
-  approved_by_email: string;
   hash_at_approval: string;
   notes: string | null;
   approved_at: string;
-}
-
-export interface Distribution {
-  id: string;
-  minutes_id: string;
-  meeting_id: string;
-  recipient_email: string;
-  recipient_name: string | null;
-  token: string;
-  sent_at: string;
-  acknowledged_at: string | null;
-  acknowledged_ip: string | null;
-}
-
-export interface AuditEvent {
-  id: string;
-  meeting_id: string;
-  event_type: string;
-  actor_id: string | null;
-  actor_email: string | null;
-  payload: Record<string, unknown> | null;
-  prev_event_id: string | null;
-  event_hash: string;
-  created_at: string;
 }
 
 // ── EOS Types ──────────────────────────────────────────────────────────────
@@ -125,7 +100,6 @@ export interface Rock {
   quarter: string | null;
   due_date: string | null;
   notes: string | null;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -138,7 +112,6 @@ export interface MeetingRock {
   owner: string | null;
   status: RockStatus;
   notes: string | null;
-  created_by: string;
   created_at: string;
 }
 
@@ -149,7 +122,6 @@ export interface Todo {
   owner: string | null;
   status: TodoStatus;
   resolved_meeting_id: string | null;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -163,7 +135,6 @@ export interface Issue {
   status: IssueStatus;
   resolution: string | null;
   resolved_in_meeting_id: string | null;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -178,7 +149,6 @@ export interface ScorecardMetric {
   description: string | null;
   sort_order: number;
   active: boolean;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
@@ -186,14 +156,12 @@ export interface ScorecardMetric {
 export interface ScorecardEntry {
   id: string;
   metric_id: string;
-  meeting_id: string | null;
-  period_date: string | null;
+  period_date: string;
   source: 'manual' | 'taxdome';
   import_id: string | null;
   value: string | null;
   on_track: boolean | null;
   notes: string | null;
-  created_by: string | null;
   created_at: string;
 }
 
@@ -203,28 +171,7 @@ export interface Headline {
   type: HeadlineType;
   text: string;
   presenter: string | null;
-  created_by: string;
   created_at: string;
-}
-
-// ── EOS PDF Analysis Result ────────────────────────────────────────────────
-
-export interface EOSAnalysisResult {
-  meeting_date: string | null;
-  meeting_title: string | null;
-  team_name: string | null;
-  attendees: Attendee[];
-  meeting_rating: number | null;
-  conclude_notes: string | null;
-  headlines: Array<{ type: HeadlineType; text: string; presenter?: string }>;
-  cascading_messages: string[];
-  rocks: Array<{ title: string; owner?: string; status: RockStatus; notes?: string }>;
-  todos_new: Array<{ title: string; owner?: string }>;
-  todos_reviewed: Array<{ title: string; owner?: string; status: TodoStatus }>;
-  issues_solved: Array<{ title: string; resolution?: string }>;
-  issues_new: Array<{ title: string; description?: string; priority?: IssuePriority }>;
-  scorecard: Array<{ title: string; owner?: string; goal?: string; value?: string; on_track?: boolean }>;
-  summary: string;
 }
 
 // ── Meeting session analysis (transcript → structured EOS data) ────────────

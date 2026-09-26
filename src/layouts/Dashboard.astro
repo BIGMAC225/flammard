@@ -1,6 +1,6 @@
 ---
 import Base from './Base.astro';
-import { createSupabaseServerClient } from '../lib/supabase-server';
+import { TEAM_LABEL } from '../lib/auth';
 
 interface Props {
   title?: string;
@@ -12,9 +12,6 @@ interface Props {
 
 const { title, eyebrow, description, back } = Astro.props;
 const appName = import.meta.env.PUBLIC_APP_NAME || 'Flammard';
-
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
 
 const NAV = [
   { href: '/dashboard', label: 'Dashboard', exact: true },
@@ -69,7 +66,7 @@ const hasActions = Astro.slots.has('actions');
         </nav>
 
         <div class="flex items-center gap-2">
-          <span class="hidden sm:block text-xs text-ink-muted">{user?.email}</span>
+          <span class="hidden sm:block text-xs text-ink-muted">{TEAM_LABEL}</span>
           <form method="POST" action="/api/auth/logout">
             <button type="submit" class="btn-ghost text-xs">Sign out</button>
           </form>

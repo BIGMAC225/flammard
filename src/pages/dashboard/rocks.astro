@@ -1,17 +1,11 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
-import { createSupabaseServerClient } from '../../lib/supabase-server';
+import { many, sql } from '../../lib/db';
 import type { Rock } from '../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
-const { data: rocks } = await supabase
-  .from('rocks')
-  .select('*')
-  .eq('created_by', user!.id)
-  .order('status', { ascending: true })
-  .order('created_at', { ascending: false }) as { data: Rock[] | null };
+const rocks = await many<Rock>(
+  sql()`select *, due_date::text as due_date from rocks order by status asc, created_at desc`
+);
 
 const statusGroups = {
   on_track: rocks?.filter(r => r.status === 'on_track') ?? [],

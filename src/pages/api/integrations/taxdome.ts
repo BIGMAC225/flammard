@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { PDFParse } from 'pdf-parse';
 import { getData as pdfWorkerData } from 'pdf-parse/worker';
 import { json } from '../../../lib/api';
-import { createServiceClient } from '../../../lib/supabase-server';
+import { many, one, sql } from '../../../lib/db';
 import { extractScorecardFromReport } from '../../../lib/claude';
 import { streamJSON } from '../../../lib/stream-json';
 import type { ScorecardMetric } from '../../../types';
@@ -98,27 +98,19 @@ export const POST: APIRoute = async ({ request }) => {
 
   if (!pdf && !text) return json({ error: 'No report attached' }, 400);
 
-  const service = createServiceClient();
+  const db = sql();
 
   return streamJSON(async () => {
-    const { data: metricRows } = await service
-      .from('scorecard_metrics')
-      .select('id, title, goal, unit, frequency, description')
-      .eq('active', true)
-      .order('sort_order');
-    const metrics = (metricRows ?? []) as Pick<
-      ScorecardMetric,
-      'id' | 'title' | 'goal' | 'unit' | 'frequency' | 'description'
-    >[];
+    const metrics = await many<Pick<ScorecardMetric, 'id' | 'title' | 'goal' | 'unit' | 'frequency' | 'description'>>(
+      db`select id, title, goal, unit, frequency, description from scorecard_metrics where active order by sort_order`
+    );
 
     // Records the failure so it shows on the Scorecard page, then throws
     const fail = async (message: string): Promise<never> => {
-      await service.from('taxdome_imports').insert({
-        file_name: fileName,
-        raw_text: text,
-        status: 'failed',
-        error: message,
-      });
+      await db`
+        insert into taxdome_imports (file_name, raw_text, status, error)
+        values (${fileName}, ${text}, 'failed', ${message})
+      `;
       throw new Error(message);
     };
 
@@ -147,42 +139,33 @@ export const POST: APIRoute = async ({ request }) => {
         ? extracted.period_end
         : new Date().toISOString().slice(0, 10);
 
-    const { data: importRow, error: importError } = await service
-      .from('taxdome_imports')
-      .insert({
-        file_name: fileName,
-        report_title: extracted.report_title,
-        period_start: periodStart,
-        period_end: periodDate,
-        raw_text: text,
-        extracted,
-        status: 'processed',
-        entries_written: extracted.values.length,
-      })
-      .select('id')
-      .single();
-    if (importError) return fail(`Saving import failed: ${importError.message}`);
+    let importRow: { id: string } | null = null;
+    try {
+      importRow = await one<{ id: string }>(db`
+        insert into taxdome_imports (file_name, report_title, period_start, period_end, raw_text, extracted, status, entries_written)
+        values (${fileName}, ${extracted.report_title}, ${periodStart}, ${periodDate}, ${text}, ${JSON.stringify(extracted)}::jsonb,
+                'processed', ${extracted.values.length})
+        returning id
+      `);
+    } catch (err) {
+      return fail(`Saving import failed: ${err instanceof Error ? err.message : 'unknown'}`);
+    }
+    if (!importRow) return fail('Saving import failed');
 
-    if (extracted.values.length) {
-      const { error } = await service.from('scorecard_entries').upsert(
-        extracted.values.map((v) => ({
-          metric_id: v.metric_id,
-          period_date: periodDate,
-          value: v.value,
-          on_track: v.on_track,
-          notes: v.notes,
-          source: 'taxdome',
-          import_id: importRow.id,
-        })),
-        { onConflict: 'metric_id,period_date' }
-      );
-      if (error) {
-        await service
-          .from('taxdome_imports')
-          .update({ status: 'failed', error: `Saving entries failed: ${error.message}`, entries_written: 0 })
-          .eq('id', importRow.id);
-        throw new Error(`Saving entries failed: ${error.message}`);
+    try {
+      for (const v of extracted.values) {
+        await db`
+          insert into scorecard_entries (metric_id, period_date, value, on_track, notes, source, import_id)
+          values (${v.metric_id}, ${periodDate}, ${v.value}, ${v.on_track}, ${v.notes}, 'taxdome', ${importRow.id})
+          on conflict (metric_id, period_date) do update set
+            value = excluded.value, on_track = excluded.on_track, notes = excluded.notes,
+            source = 'taxdome', import_id = excluded.import_id
+        `;
       }
+    } catch (err) {
+      const message = `Saving entries failed: ${err instanceof Error ? err.message : 'unknown'}`;
+      await db`update taxdome_imports set status = 'failed', error = ${message}, entries_written = 0 where id = ${importRow.id}`;
+      throw new Error(message);
     }
 
     return {

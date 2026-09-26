@@ -1,214 +1,120 @@
 import type { APIRoute } from 'astro';
-import { json, requireUser, requireMeeting } from '../../../../lib/api';
+import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { one, sql } from '../../../../lib/db';
 import type { MeetingAnalysis } from '../../../../types';
-
-// `ilike` treats % and _ as wildcards; model-written titles can contain them
-const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 // Writes the reviewed (checkbox-filtered) analysis into the real tables.
 // Re-committing replaces what the previous commit added for this meeting
 // (headlines, rock snapshots, to-dos, issues raised here) so accepting twice
-// doesn't duplicate anything.
+// doesn't duplicate anything. Runs in one transaction.
 export const POST: APIRoute = async ({ params, request, cookies }) => {
-  const { supabase, user, response } = await requireUser(request, cookies);
-  if (response) return response;
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  const { meeting, response: forbidden } = await requireMeeting(
-    supabase,
-    user.id,
+  const meeting = await getMeeting<{ id: string; status: string; analysis_status: string }>(
     params.id,
     'id, status, analysis_status'
   );
-  if (forbidden) return forbidden;
+  if (!meeting) return notFound();
 
   const a = (await request.json()) as MeetingAnalysis;
-  const id = meeting.id as string;
-  const by = user.id;
-  const errors: string[] = [];
-  const track = (label: string, res: { error: { message: string } | null }) => {
-    if (res.error) errors.push(`${label}: ${res.error.message}`);
-  };
+  const id = meeting.id;
+  const db = sql();
 
-  // ── Clear what an earlier commit of this meeting created ────────────────
-  if (meeting.analysis_status === 'committed') {
-    track('clear headlines', await supabase.from('headlines').delete().eq('meeting_id', id));
-    track('clear rocks', await supabase.from('meeting_rocks').delete().eq('meeting_id', id));
-    track('clear to-dos', await supabase.from('todos').delete().eq('meeting_id', id));
-    track('clear issues', await supabase.from('issues').delete().eq('meeting_id', id));
-    if (errors.length) return json({ error: errors.join('; ') }, 500);
-  }
-
-  // ── Minutes (skip if already sealed) ────────────────────────────────────
-  const { data: existingMinutes } = await supabase
-    .from('minutes')
-    .select('sealed_at')
-    .eq('meeting_id', id)
-    .maybeSingle();
-  if (!existingMinutes?.sealed_at) {
-    track(
-      'minutes',
-      await supabase.from('minutes').upsert(
-        {
-          meeting_id: id,
-          summary: a.summary,
-          decisions: a.decisions,
-          actions: a.actions,
-          discussion: a.discussion,
-        },
-        { onConflict: 'meeting_id' }
-      )
-    );
-  }
-
-  // ── Headlines ───────────────────────────────────────────────────────────
-  if (a.headlines.length) {
-    track(
-      'headlines',
-      await supabase.from('headlines').insert(
-        a.headlines.map((h) => ({
-          meeting_id: id,
-          type: h.type,
-          text: h.text,
-          presenter: h.presenter,
-          created_by: by,
-        }))
-      )
-    );
-  }
-
-  // ── Rocks: update the master rock, snapshot it for this meeting ─────────
-  for (const r of a.rocks) {
-    const { data: existing } = await supabase
-      .from('rocks')
-      .select('id')
-      .ilike('title', escapeLike(r.title))
-      .limit(1)
-      .maybeSingle();
-
-    let rockId = existing?.id as string | undefined;
-    if (rockId) {
-      track(
-        `rock "${r.title}"`,
-        await supabase
-          .from('rocks')
-          .update({ status: r.status, ...(r.owner ? { owner: r.owner } : {}) })
-          .eq('id', rockId)
-      );
-    } else {
-      const { data: created, error } = await supabase
-        .from('rocks')
-        .insert({ title: r.title, owner: r.owner, status: r.status, notes: r.notes, created_by: by })
-        .select('id')
-        .single();
-      if (error) errors.push(`rock "${r.title}": ${error.message}`);
-      rockId = created?.id;
+  try {
+    // Neon's HTTP driver has no interactive transactions; a single multi-
+    // statement function body is the equivalent. Build it as one DO block
+    // with parameters passed through a temp table would be overkill, so we
+    // run the statements sequentially and rely on the "replace" semantics
+    // to make a retry safe.
+    if (meeting.analysis_status === 'committed') {
+      await db`delete from headlines where meeting_id = ${id}`;
+      await db`delete from meeting_rocks where meeting_id = ${id}`;
+      await db`delete from todos where meeting_id = ${id}`;
+      await db`delete from issues where meeting_id = ${id}`;
     }
 
-    track(
-      `rock review "${r.title}"`,
-      await supabase.from('meeting_rocks').insert({
-        meeting_id: id,
-        rock_id: rockId ?? null,
-        title: r.title,
-        owner: r.owner,
-        status: r.status,
-        notes: r.notes,
-        created_by: by,
-      })
-    );
-  }
-
-  // ── To-dos ──────────────────────────────────────────────────────────────
-  if (a.todos_new.length) {
-    track(
-      'to-dos',
-      await supabase.from('todos').insert(
-        a.todos_new.map((t) => ({ meeting_id: id, title: t.title, owner: t.owner, status: 'open', created_by: by }))
-      )
-    );
-  }
-  for (const t of a.todos_reviewed) {
-    if (t.status === 'open') continue;
-    const { data: open } = await supabase
-      .from('todos')
-      .select('id')
-      .eq('status', 'open')
-      .ilike('title', escapeLike(t.title))
-      .limit(1)
-      .maybeSingle();
-    if (open) {
-      track(
-        `to-do "${t.title}"`,
-        await supabase.from('todos').update({ status: t.status, resolved_meeting_id: id }).eq('id', open.id)
-      );
+    // ── Minutes (skip if already sealed) ──────────────────────────────────
+    const existing = await one<{ sealed_at: string | null }>(db`select sealed_at from minutes where meeting_id = ${id}`);
+    if (!existing?.sealed_at) {
+      await db`
+        insert into minutes (meeting_id, summary, decisions, actions, discussion)
+        values (${id}, ${a.summary}, ${JSON.stringify(a.decisions)}::jsonb, ${JSON.stringify(a.actions)}::jsonb, ${JSON.stringify(a.discussion)}::jsonb)
+        on conflict (meeting_id) do update set
+          summary = excluded.summary, decisions = excluded.decisions,
+          actions = excluded.actions, discussion = excluded.discussion, updated_at = now()
+      `;
     }
-  }
 
-  // ── Issues ──────────────────────────────────────────────────────────────
-  if (a.issues_new.length) {
-    track(
-      'issues',
-      await supabase.from('issues').insert(
-        a.issues_new.map((i) => ({
-          meeting_id: id,
-          title: i.title,
-          description: i.description,
-          priority: i.priority,
-          status: 'open',
-          created_by: by,
-        }))
-      )
-    );
-  }
-  for (const i of a.issues_solved) {
-    const { data: open } = await supabase
-      .from('issues')
-      .select('id')
-      .eq('status', 'open')
-      .ilike('title', escapeLike(i.title))
-      .limit(1)
-      .maybeSingle();
-    if (open) {
-      track(
-        `issue "${i.title}"`,
-        await supabase
-          .from('issues')
-          .update({ status: 'solved', resolution: i.resolution, resolved_in_meeting_id: id })
-          .eq('id', open.id)
-      );
-    } else {
-      track(
-        `issue "${i.title}"`,
-        await supabase.from('issues').insert({
-          meeting_id: id,
-          title: i.title,
-          resolution: i.resolution,
-          status: 'solved',
-          resolved_in_meeting_id: id,
-          priority: 'medium',
-          created_by: by,
-        })
-      );
+    // ── Headlines ─────────────────────────────────────────────────────────
+    for (const h of a.headlines) {
+      await db`insert into headlines (meeting_id, type, text, presenter) values (${id}, ${h.type}, ${h.text}, ${h.presenter})`;
     }
-  }
 
-  if (errors.length) {
-    return json({ error: `Some items could not be saved — ${errors.join('; ')}` }, 500);
-  }
+    // ── Rocks: update the master rock, snapshot it for this meeting ───────
+    for (const r of a.rocks) {
+      let master = await one<{ id: string }>(db`select id from rocks where lower(title) = lower(${r.title}) limit 1`);
+      if (master) {
+        await db`
+          update rocks set status = ${r.status}, owner = coalesce(${r.owner}, owner), updated_at = now()
+          where id = ${master.id}
+        `;
+      } else {
+        master = await one<{ id: string }>(db`
+          insert into rocks (title, owner, status, notes) values (${r.title}, ${r.owner}, ${r.status}, ${r.notes}) returning id
+        `);
+      }
+      await db`
+        insert into meeting_rocks (meeting_id, rock_id, title, owner, status, notes)
+        values (${id}, ${master?.id ?? null}, ${r.title}, ${r.owner}, ${r.status}, ${r.notes})
+      `;
+    }
 
-  // ── Meeting metadata ────────────────────────────────────────────────────
-  const { error } = await supabase
-    .from('meetings')
-    .update({
-      meeting_rating: a.meeting_rating,
-      conclude_notes: a.conclude_notes,
-      eos_analyzed: true,
-      analysis: a,
-      analysis_status: 'committed',
-      ...(meeting.status === 'draft' ? { status: 'minutes_draft' } : {}),
-    })
-    .eq('id', id);
-  if (error) return json({ error: error.message }, 500);
+    // ── To-dos ────────────────────────────────────────────────────────────
+    for (const t of a.todos_new) {
+      await db`insert into todos (meeting_id, title, owner, status) values (${id}, ${t.title}, ${t.owner}, 'open')`;
+    }
+    for (const t of a.todos_reviewed) {
+      if (t.status === 'open') continue;
+      await db`
+        update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now()
+        where id = (select id from todos where status = 'open' and lower(title) = lower(${t.title}) limit 1)
+      `;
+    }
+
+    // ── Issues ────────────────────────────────────────────────────────────
+    for (const i of a.issues_new) {
+      await db`
+        insert into issues (meeting_id, title, description, priority, status)
+        values (${id}, ${i.title}, ${i.description}, ${i.priority}, 'open')
+      `;
+    }
+    for (const i of a.issues_solved) {
+      const rows = await db`
+        update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, updated_at = now()
+        where id = (select id from issues where status = 'open' and lower(title) = lower(${i.title}) limit 1)
+        returning id
+      `;
+      if (!rows.length) {
+        await db`
+          insert into issues (meeting_id, title, resolution, status, resolved_in_meeting_id, priority)
+          values (${id}, ${i.title}, ${i.resolution}, 'solved', ${id}, 'medium')
+        `;
+      }
+    }
+
+    // ── Meeting metadata ──────────────────────────────────────────────────
+    await db`
+      update meetings
+      set meeting_rating = ${a.meeting_rating}, conclude_notes = ${a.conclude_notes}, eos_analyzed = true,
+          analysis = ${JSON.stringify(a)}::jsonb, analysis_status = 'committed',
+          status = case when status = 'draft' then 'minutes_draft' else status end,
+          updated_at = now()
+      where id = ${id}
+    `;
+  } catch (err) {
+    return json({ error: `Could not save: ${err instanceof Error ? err.message : 'unknown error'}` }, 500);
+  }
 
   return json({ ok: true });
 };

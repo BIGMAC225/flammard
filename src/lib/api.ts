@@ -1,5 +1,6 @@
 import type { AstroCookies } from 'astro';
-import { createSupabaseServerClient } from './supabase-server';
+import { isAuthenticated } from './auth';
+import { one, sql } from './db';
 
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -8,30 +9,19 @@ export function json(data: unknown, status = 200): Response {
   });
 }
 
-/** Resolves the signed-in user, or a 401 response to return as-is. */
-export async function requireUser(request: Request, cookies: AstroCookies) {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { supabase, user: null, response: json({ error: 'Unauthorized' }, 401) };
-  return { supabase, user, response: null };
+/** 401 response when the session cookie is missing or invalid, else null. */
+export function requireAuth(cookies: AstroCookies): Response | null {
+  return isAuthenticated(cookies) ? null : json({ error: 'Unauthorized' }, 401);
 }
 
-/** Loads a meeting the user owns, or a 403 response. */
-export async function requireMeeting(
-  supabase: ReturnType<typeof createSupabaseServerClient>,
-  userId: string,
-  meetingId: string | undefined,
+/** Loads a meeting row (or the requested columns), or null if it doesn't exist. */
+export async function getMeeting<T = Record<string, any>>(
+  id: string | undefined,
   columns = '*'
-) {
-  const { data: meeting } = await supabase
-    .from('meetings')
-    .select(columns)
-    .eq('id', meetingId ?? '')
-    .eq('created_by', userId)
-    .maybeSingle();
-  if (!meeting) return { meeting: null, response: json({ error: 'Forbidden' }, 403) };
-  // Columns are caller-chosen, so the row is typed loosely
-  return { meeting: meeting as Record<string, any>, response: null };
+): Promise<T | null> {
+  if (!id || !/^[0-9a-f-]{36}$/i.test(id)) return null;
+  return one<T>(sql().query(`select ${columns} from meetings where id = $1`, [id]));
 }
+
+/** Response for a request whose meeting id doesn't resolve. */
+export const notFound = (what = 'Meeting') => json({ error: `${what} not found` }, 404);

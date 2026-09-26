@@ -1,18 +1,14 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
-import { createSupabaseServerClient } from '../../lib/supabase-server';
+import { many, sql } from '../../lib/db';
 import type { Issue } from '../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
-const { data: issues } = await supabase
-  .from('issues')
-  .select('*, meetings(title, date)')
-  .eq('created_by', user!.id)
-  .order('status', { ascending: true })
-  .order('priority', { ascending: false })
-  .order('created_at', { ascending: false }) as { data: (Issue & { meetings: { title: string; date: string } | null })[] | null };
+const rows = await many<Issue & { meeting_title: string; meeting_date: string }>(sql()`
+  select i.*, m.title as meeting_title, m.date::text as meeting_date
+  from issues i join meetings m on m.id = i.meeting_id
+  order by i.status asc, i.priority desc, i.created_at desc
+`);
+const issues = rows.map((i) => ({ ...i, meetings: { title: i.meeting_title, date: i.meeting_date } }));
 
 const open = issues?.filter(i => i.status === 'open') ?? [];
 const solved = issues?.filter(i => i.status === 'solved') ?? [];

@@ -1,37 +1,20 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import { json, requireAuth } from '../../../lib/api';
+import { sql } from '../../../lib/db';
 
 export const PATCH: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-
-  const { id } = params;
-  const body = await request.json();
-  const { status } = body;
-
-  const { error } = await supabase
-    .from('meeting_rocks')
-    .update({ status })
-    .eq('id', id)
-    .eq('created_by', user.id);
-
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
+  const { status } = await request.json();
+  if (!status) return json({ error: 'Status required' }, 400);
+  const rows = await sql()`update meeting_rocks set status = ${status} where id = ${params.id!} returning id`;
+  if (!rows.length) return json({ error: 'Not found' }, 404);
+  return json({ ok: true });
 };
 
-export const DELETE: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-
-  const { id } = params;
-  const { error } = await supabase
-    .from('meeting_rocks')
-    .delete()
-    .eq('id', id)
-    .eq('created_by', user.id);
-
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+export const DELETE: APIRoute = async ({ params, cookies }) => {
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
+  await sql()`delete from meeting_rocks where id = ${params.id!}`;
+  return json({ ok: true });
 };

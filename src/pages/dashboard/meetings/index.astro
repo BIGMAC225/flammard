@@ -1,15 +1,11 @@
 ---
 import Dashboard from '../../../layouts/Dashboard.astro';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import { many, sql } from '../../../lib/db';
+import type { Attendee } from '../../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
-const { data: meetings } = await supabase
-  .from('meetings')
-  .select('id, title, date, location, status, attendees, created_at')
-  .eq('created_by', user!.id)
-  .order('date', { ascending: false });
+const meetings = await many<{ id: string; title: string; date: string; location: string | null; status: string; attendees: Attendee[] }>(
+  sql()`select id, title, date::text as date, location, status, attendees from meetings order by date desc, created_at desc`
+);
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
@@ -63,7 +59,7 @@ const STATUS_CLASS: Record<string, string> = {
               </td>
               <td class="px-5 py-3.5 text-ink-secondary hidden md:table-cell">{m.date}</td>
               <td class="px-5 py-3.5 text-ink-secondary hidden sm:table-cell">
-                {(m.attendees as any[])?.length ?? 0}
+                {m.attendees?.length ?? 0}
               </td>
               <td class="px-5 py-3.5">
                 <span class={STATUS_CLASS[m.status] ?? 'badge-draft'}>

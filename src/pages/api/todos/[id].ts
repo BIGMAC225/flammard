@@ -1,35 +1,21 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import { json, requireAuth } from '../../../lib/api';
+import { buildUpdate, sql } from '../../../lib/db';
 
 export const PATCH: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  const { id } = params;
-  const body = await request.json();
-  const updates: Record<string, unknown> = {};
-  if (body.status !== undefined) updates.status = body.status;
-  if (body.title !== undefined) updates.title = body.title;
-  if (body.owner !== undefined) updates.owner = body.owner;
-
-  const { error } = await supabase
-    .from('todos')
-    .update(updates)
-    .eq('id', id)
-    .eq('created_by', user.id);
-
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const update = buildUpdate('todos', params.id!, await request.json(), ['status', 'title', 'owner'], { updated_at: new Date() });
+  if (!update) return json({ error: 'Nothing to update' }, 400);
+  const rows = await sql().query(update.text, update.params);
+  if (!rows.length) return json({ error: 'Not found' }, 404);
+  return json({ ok: true });
 };
 
-export const DELETE: APIRoute = async ({ params, request, cookies }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-
-  const { id } = params;
-  const { error } = await supabase.from('todos').delete().eq('id', id).eq('created_by', user.id);
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+export const DELETE: APIRoute = async ({ params, cookies }) => {
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
+  await sql()`delete from todos where id = ${params.id!}`;
+  return json({ ok: true });
 };

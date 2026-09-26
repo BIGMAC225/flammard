@@ -1,8 +1,7 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import { endSession } from '../../../lib/auth';
 
-export const POST: APIRoute = async ({ request, cookies, redirect }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  await supabase.auth.signOut();
+export const POST: APIRoute = async ({ cookies, redirect }) => {
+  endSession(cookies);
   return redirect('/login');
 };

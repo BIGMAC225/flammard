@@ -1,16 +1,14 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
-import { createSupabaseServerClient } from '../../lib/supabase-server';
+import { many, sql } from '../../lib/db';
 import type { Todo } from '../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
-const { data: todos } = await supabase
-  .from('todos')
-  .select('*, meetings(title, date)')
-  .eq('created_by', user!.id)
-  .order('created_at', { ascending: false }) as { data: (Todo & { meetings: { title: string; date: string } | null })[] | null };
+const rows = await many<Todo & { meeting_title: string; meeting_date: string }>(sql()`
+  select t.*, m.title as meeting_title, m.date::text as meeting_date
+  from todos t join meetings m on m.id = t.meeting_id
+  order by t.created_at desc
+`);
+const todos = rows.map((t) => ({ ...t, meetings: { title: t.meeting_title, date: t.meeting_date } }));
 
 const open = todos?.filter(t => t.status === 'open') ?? [];
 const done = todos?.filter(t => t.status === 'done') ?? [];

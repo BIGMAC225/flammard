@@ -6,43 +6,31 @@ import RocksPanel from '../../../components/RocksPanel';
 import TodoPanel from '../../../components/TodoPanel';
 import IssuesPanel from '../../../components/IssuesPanel';
 import HeadlinesPanel from '../../../components/HeadlinesPanel';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
-import type { Minutes, MeetingRock, Todo, Issue, Headline, Attendee, MeetingAnalysis, AnalysisStatus } from '../../../types';
+import { many, one, sql } from '../../../lib/db';
+import { getMeeting } from '../../../lib/api';
+import type { Minutes, MeetingRock, Todo, Issue, Headline, Attendee, Meeting } from '../../../types';
 
 const { id } = Astro.params;
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
 if (!id) return Astro.redirect('/dashboard/meetings');
 
-const { data: meeting, error } = await supabase
-  .from('meetings')
-  .select('*')
-  .eq('id', id)
-  .single();
+const meeting = await getMeeting<Meeting>(id, '*, date::text as date');
+if (!meeting) return Astro.redirect('/dashboard/meetings');
 
-if (error || !meeting || meeting.created_by !== user!.id) {
-  return Astro.redirect('/dashboard/meetings');
-}
-
-const [
-  { data: minutes },
-  { data: meetingRocks },
-  { data: todos },
-  { data: issues },
-  { data: headlines },
-  { data: approvalData },
-] = await Promise.all([
-  supabase.from('minutes').select('*').eq('meeting_id', id).maybeSingle(),
-  supabase.from('meeting_rocks').select('*').eq('meeting_id', id).order('created_at'),
-  supabase.from('todos').select('*').eq('meeting_id', id).order('created_at'),
-  supabase.from('issues').select('*').eq('meeting_id', id).order('created_at'),
-  supabase.from('headlines').select('*').eq('meeting_id', id).order('created_at'),
-  supabase.from('approvals').select('approved_by_email, approved_at').eq('minutes_id', (await supabase.from('minutes').select('id').eq('meeting_id', id).maybeSingle()).data?.id ?? '').maybeSingle(),
+const db = sql();
+const [typedMinutes, meetingRocks, todos, issues, headlines, approvalData] = await Promise.all([
+  one<Minutes>(db`select * from minutes where meeting_id = ${id}`),
+  many<MeetingRock>(db`select * from meeting_rocks where meeting_id = ${id} order by created_at`),
+  many<Todo>(db`select * from todos where meeting_id = ${id} order by created_at`),
+  many<Issue>(db`select * from issues where meeting_id = ${id} order by created_at`),
+  many<Headline>(db`select * from headlines where meeting_id = ${id} order by created_at`),
+  one<{ approved_by: string; approved_at: string }>(db`
+    select a.approved_by, a.approved_at from approvals a
+    join minutes mi on mi.id = a.minutes_id where mi.meeting_id = ${id}
+    order by a.approved_at desc limit 1
+  `),
 ]);
 
-const typedMinutes = minutes as Minutes | null;
-const attendees = (meeting.attendees as Attendee[]) ?? [];
+const attendees = meeting.attendees ?? [];
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
@@ -113,8 +101,8 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
       hasTranscript={!!meeting.transcript}
       transcriptChars={meeting.transcript?.length ?? 0}
       transcriptFileName={meeting.transcript_path ?? null}
-      analysis={(meeting.analysis as MeetingAnalysis | null) ?? null}
-      analysisStatus={(meeting.analysis_status as AnalysisStatus) ?? 'none'}
+      analysis={meeting.analysis}
+      analysisStatus={meeting.analysis_status ?? 'none'}
       client:load
     />
   )}
@@ -126,7 +114,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
       <section class="card">
         <h2 class="section-title mb-1">Headlines</h2>
         <p class="text-sm text-ink-secondary mb-4">Customer wins, employee wins, and good news.</p>
-        <HeadlinesPanel meetingId={id} initialHeadlines={headlines ?? []} client:load />
+        <HeadlinesPanel meetingId={id} initialHeadlines={headlines} client:load />
       </section>
 
       <section class="card">
@@ -137,7 +125,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
           </div>
           <a href="/dashboard/rocks" class="text-xs text-accent hover:text-accent-dim transition-colors">All rocks →</a>
         </div>
-        <RocksPanel meetingId={id} initialRocks={meetingRocks ?? []} client:load />
+        <RocksPanel meetingId={id} initialRocks={meetingRocks} client:load />
       </section>
 
       <section class="card">
@@ -148,7 +136,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
           </div>
           <a href="/dashboard/todos" class="text-xs text-accent hover:text-accent-dim transition-colors">All to-dos →</a>
         </div>
-        <TodoPanel meetingId={id} initialTodos={todos ?? []} client:load />
+        <TodoPanel meetingId={id} initialTodos={todos} client:load />
       </section>
 
       <section class="card">
@@ -159,7 +147,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
           </div>
           <a href="/dashboard/issues" class="text-xs text-accent hover:text-accent-dim transition-colors">All issues →</a>
         </div>
-        <IssuesPanel meetingId={id} initialIssues={issues ?? []} client:load />
+        <IssuesPanel meetingId={id} initialIssues={issues} client:load />
       </section>
 
       {meeting.conclude_notes && (
@@ -186,7 +174,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
             )}
             {approvalData && (
               <p class="text-xs text-ink-muted mt-0.5">
-                Approved by {approvalData.approved_by_email} · {new Date(approvalData.approved_at).toLocaleString()}
+                Approved by {approvalData.approved_by} · {new Date(approvalData.approved_at).toLocaleString()}
               </p>
             )}
           </div>

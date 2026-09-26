@@ -1,8 +1,4 @@
 ---
-import { createSupabaseServerClient } from '../lib/supabase-server';
-
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
-return Astro.redirect(user ? '/dashboard' : '/login');
+import { isAuthenticated } from '../lib/auth';
+return Astro.redirect(isAuthenticated(Astro.cookies) ? '/dashboard' : '/login');
 ---

@@ -1,15 +1,16 @@
 import type { APIRoute } from 'astro';
-import { json, requireUser, requireMeeting } from '../../../../lib/api';
+import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
+import { sql } from '../../../../lib/db';
 import { transcriptToText } from '../../../../lib/transcript';
 
 // Accepts either a multipart upload (`file`: Vibe's .txt/.srt/.vtt/.json
 // export) or JSON `{ transcript }` for pasted text.
 export const POST: APIRoute = async ({ params, request, cookies }) => {
-  const { supabase, user, response } = await requireUser(request, cookies);
-  if (response) return response;
+  const denied = requireAuth(cookies);
+  if (denied) return denied;
 
-  const { meeting, response: forbidden } = await requireMeeting(supabase, user.id, params.id, 'id');
-  if (forbidden) return forbidden;
+  const meeting = await getMeeting(params.id, 'id');
+  if (!meeting) return notFound();
 
   let text = '';
   let fileName: string | null = null;
@@ -27,19 +28,12 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
 
   if (text.length < 20) return json({ error: 'Transcript is empty' }, 400);
 
-  const { error } = await supabase
-    .from('meetings')
-    .update({
-      transcript: text,
-      transcript_path: fileName,
-      input_type: fileName ? 'transcript' : 'text',
-      // A new transcript invalidates any earlier analysis
-      analysis: null,
-      analysis_status: 'none',
-      analyzed_at: null,
-    })
-    .eq('id', meeting.id);
-  if (error) return json({ error: error.message }, 500);
-
+  // A new transcript invalidates any earlier analysis
+  await sql()`
+    update meetings
+    set transcript = ${text}, transcript_path = ${fileName}, input_type = ${fileName ? 'transcript' : 'text'},
+        analysis = null, analysis_status = 'none', analyzed_at = null, updated_at = now()
+    where id = ${meeting.id}
+  `;
   return json({ ok: true, length: text.length });
 };

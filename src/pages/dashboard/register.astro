@@ -1,22 +1,21 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
 import DecisionRegister from '../../components/DecisionRegister';
-import { createSupabaseServerClient } from '../../lib/supabase-server';
+import { many, sql } from '../../lib/db';
 import type { Decision, ActionItem } from '../../types';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies);
-const { data: { user } } = await supabase.auth.getUser();
-
-// Fetch all approved minutes + their meetings
-const { data: rows } = await supabase
-  .from('minutes')
-  .select(`
-    id,
-    decisions,
-    actions,
-    meetings!inner(id, title, date, created_by)
-  `)
-  .not('sealed_at', 'is', null);
+// All approved minutes + their meetings
+const rows = await many<{
+  id: string;
+  decisions: Decision[];
+  actions: ActionItem[];
+  meetings: { id: string; title: string; date: string };
+}>(sql()`
+  select mi.id, mi.decisions, mi.actions,
+         jsonb_build_object('id', m.id, 'title', m.title, 'date', m.date::text) as meetings
+  from minutes mi join meetings m on m.id = mi.meeting_id
+  where mi.sealed_at is not null
+`);
 
 // Flatten to register entries
 const entries: Array<{
@@ -32,9 +31,8 @@ const entries: Array<{
   status?: string;
 }> = [];
 
-for (const row of rows ?? []) {
-  const m = (row as any).meetings;
-  if (!m || m.created_by !== user!.id) continue;
+for (const row of rows) {
+  const m = row.meetings;
 
   for (const d of (row.decisions as Decision[]) ?? []) {
     entries.push({
@@ -67,9 +65,6 @@ for (const row of rows ?? []) {
 entries.sort((a, b) => b.meeting_date.localeCompare(a.meeting_date));
 ---
 
-<Dashboard title="Decision & Action Register">
-  <p class="text-sm text-ink-secondary mb-6 -mt-2">
-    All decisions and action items from approved meetings, in one place.
-  </p>
+<Dashboard eyebrow="Records" title="Decision & Action Register" description="All decisions and action items from approved meetings, in one place.">
   <DecisionRegister entries={entries} client:load />
 </Dashboard>
