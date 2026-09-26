@@ -106,7 +106,7 @@ export default function SetPasswordForm({
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     const local = localPasswordProblem(password, confirm);
     if (local) return setError(local);
@@ -161,7 +161,7 @@ export function BootstrapOwnerForm({
     if (p?.email) setEmail(p.email);
   };
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (creating && !name.trim()) return setError('Enter your name.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setError('Enter your work email.');

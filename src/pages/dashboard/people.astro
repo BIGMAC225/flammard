@@ -1,0 +1,79 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import PeopleAdmin, { type PersonRow } from '../../components/PeopleAdmin';
+import { BootstrapOwnerForm } from '../../components/SetPasswordForm';
+import { many, sql } from '../../lib/db';
+import { bootstrapOpen } from '../../lib/people';
+import { can } from '../../lib/permissions';
+import { getSettings } from '../../lib/settings';
+import { TIMEZONE } from '../../lib/dates';
+
+// People admin (people.manage). For the shared team login while no owner can
+// sign in yet, this page shows only the first-owner bootstrap form (spec §3.7);
+// the middleware lets the shared login in only in that case.
+const principal = Astro.locals.principal!;
+const settings = await getSettings();
+
+const iso = (v: unknown): string | null => {
+  if (v === null || v === undefined) return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
+
+let claimable: Array<{ id: string; name: string; email: string | null }> = [];
+let people: PersonRow[] = [];
+const bootstrap = principal.kind === 'shared';
+
+if (bootstrap) {
+  if (await bootstrapOpen()) {
+    claimable = await many(
+      sql()`select id, name, email from people
+            where role = 'owner' and active and password_hash is null order by lower(name)`
+    );
+  } else {
+    return Astro.redirect('/dashboard');
+  }
+} else {
+  const rows = await many<PersonRow>(sql()`
+    select p.id, p.name, p.email, p.title, p.role, p.teams, p.aliases, p.active,
+           (p.password_hash is not null) as has_password, p.last_login_at, p.created_at, p.updated_at,
+           l.expires_at as link_expires_at, l.purpose as link_purpose
+    from people p
+    left join lateral (
+      select t.expires_at, t.purpose from person_tokens t
+      where t.person_id = p.id and t.used_at is null and t.expires_at > now()
+      order by t.created_at desc limit 1
+    ) l on true
+    order by p.active desc, lower(p.name), p.id
+  `);
+  people = rows.map((r) => ({
+    ...r,
+    teams: r.teams ?? [],
+    aliases: r.aliases ?? [],
+    last_login_at: iso(r.last_login_at),
+    link_expires_at: iso(r.link_expires_at),
+    created_at: iso(r.created_at) ?? '',
+    updated_at: iso(r.updated_at) ?? '',
+  }));
+}
+
+const actor = {
+  id: principal.id ?? '',
+  role: principal.role,
+  canGrantAdmin: can(principal, 'people.grant_admin'),
+};
+---
+
+<Dashboard
+  eyebrow="Admin"
+  title={bootstrap ? 'Set up your owner account' : 'People'}
+  description={bootstrap
+    ? 'One-time step: claim the owner account so you can sign in as yourself.'
+    : 'Everyone who owns items or signs in. Create a setup link for each person and send it to them yourself.'}
+>
+  {bootstrap ? (
+    <BootstrapOwnerForm claimable={claimable} emailDomain={settings.email_domain} client:load />
+  ) : (
+    <PeopleAdmin initialPeople={people} actor={actor} emailDomain={settings.email_domain} timeZone={TIMEZONE} client:load />
+  )}
+</Dashboard>
