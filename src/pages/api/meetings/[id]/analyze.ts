@@ -38,12 +38,11 @@ export const POST: APIRoute = async ({ params, cookies }) => {
       db`select title, owner, status from rocks where team = ${meeting.team} and status in ('on_track', 'off_track')`
     ),
     many<{ title: string; owner: string | null }>(db`
-      select t.title, t.owner from todos t join meetings m on m.id = t.meeting_id
-      where m.team = ${meeting.team} and t.status = 'open'
+      select title, owner from todos where team = ${meeting.team} and status = 'open'
     `),
     many<{ title: string }>(db`
-      select i.title from issues i join meetings m on m.id = i.meeting_id
-      where m.team = ${meeting.team} and i.status = 'open'
+      select title from issues where team = ${meeting.team} and status = 'open'
+      order by horizon desc, rank nulls last
     `),
   ]);
 

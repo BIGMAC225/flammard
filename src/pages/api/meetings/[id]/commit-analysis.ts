@@ -49,9 +49,9 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
 
     // ── Undo the previous commit of this meeting ────────────────────────
     db`update todos set status = 'open', resolved_meeting_id = null, updated_at = now()
-       where resolved_meeting_id = ${id} and meeting_id <> ${id}`,
+       where resolved_meeting_id = ${id} and meeting_id is distinct from ${id}`,
     db`update issues set status = 'open', resolution = null, resolved_in_meeting_id = null, updated_at = now()
-       where resolved_in_meeting_id = ${id} and meeting_id <> ${id}`,
+       where resolved_in_meeting_id = ${id} and meeting_id is distinct from ${id}`,
     db`delete from steps where parent_type = 'todo' and parent_id in (select id from todos where meeting_id = ${id} and source = 'analysis')`,
     db`delete from steps where parent_type = 'issue' and parent_id in (select id from issues where meeting_id = ${id} and source = 'analysis')`,
     db`delete from headlines where meeting_id = ${id} and source = 'analysis'`,
@@ -91,7 +91,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
 
     // ── To-dos ──────────────────────────────────────────────────────────
     ...a.todos_new.map(
-      (t) => db`insert into todos (meeting_id, title, owner, status, source) values (${id}, ${t.title}, ${t.owner}, 'open', 'analysis')`
+      (t) => db`insert into todos (meeting_id, team, title, owner, status, source) values (${id}, ${team}, ${t.title}, ${t.owner}, 'open', 'analysis')`
     ),
     ...a.todos_reviewed
       .filter((t) => t.status !== 'open')
@@ -99,28 +99,29 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
         (t) => db`
           update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now()
           where id = (
-            select t.id from todos t join meetings m on m.id = t.meeting_id
-            where m.team = ${team} and t.meeting_id <> ${id} and t.status = 'open' and lower(t.title) = lower(${t.title}) limit 1
+            select id from todos
+            where team = ${team} and meeting_id is distinct from ${id} and status = 'open' and lower(title) = lower(${t.title}) limit 1
           )`
       ),
 
-    // ── Issues ──────────────────────────────────────────────────────────
+    // ── Issues (new ones go to the bottom of the short-term list) ────────
     ...a.issues_new.map(
       (i) => db`
-        insert into issues (meeting_id, title, description, priority, status, source)
-        values (${id}, ${i.title}, ${i.description}, ${i.priority}, 'open', 'analysis')`
+        insert into issues (meeting_id, team, title, description, priority, status, source, horizon, rank)
+        values (${id}, ${team}, ${i.title}, ${i.description}, ${i.priority}, 'open', 'analysis', 'short',
+          (select coalesce(max(rank), 0) + 1 from issues where team = ${team} and horizon = 'short'))`
     ),
     ...a.issues_solved.map(
       (i) => db`
         with solved as (
           update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, updated_at = now()
           where id = (
-            select i.id from issues i join meetings m on m.id = i.meeting_id
-            where m.team = ${team} and i.meeting_id <> ${id} and i.status = 'open' and lower(i.title) = lower(${i.title}) limit 1
+            select id from issues
+            where team = ${team} and meeting_id is distinct from ${id} and status = 'open' and lower(title) = lower(${i.title}) limit 1
           ) returning id
         )
-        insert into issues (meeting_id, title, resolution, status, resolved_in_meeting_id, priority, source)
-        select ${id}, ${i.title}, ${i.resolution}, 'solved', ${id}, 'medium', 'analysis'
+        insert into issues (meeting_id, team, title, resolution, status, resolved_in_meeting_id, priority, source)
+        select ${id}, ${team}, ${i.title}, ${i.resolution}, 'solved', ${id}, 'medium', 'analysis'
         where not exists (select 1 from solved)`
     ),
 

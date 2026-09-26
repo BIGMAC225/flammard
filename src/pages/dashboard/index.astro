@@ -27,8 +27,8 @@ const [meetings, counts] = await Promise.all([
       (select count(*)::int from meetings where team = ${team} and status in ('draft', 'minutes_draft')) as draft,
       (select count(*)::int from rocks where team = ${team} and status = 'on_track') as rocks_on_track,
       (select count(*)::int from rocks where team = ${team} and status in ('on_track', 'off_track')) as rocks_active,
-      (select count(*)::int from todos t join meetings m on m.id = t.meeting_id where m.team = ${team} and t.status = 'open') as open_todos,
-      (select count(*)::int from issues i join meetings m on m.id = i.meeting_id where m.team = ${team} and i.status = 'open') as open_issues
+      (select count(*)::int from todos where team = ${team} and status = 'open') as open_todos,
+      (select count(*)::int from issues where team = ${team} and status = 'open' and horizon = 'short') as open_issues
   `),
 ]);
 
