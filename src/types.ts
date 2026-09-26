@@ -52,6 +52,10 @@ export interface Meeting {
   input_type: InputType | null;
   transcript: string | null;
   recording_path: string | null;
+  transcript_path: string | null;
+  analysis: MeetingAnalysis | null;
+  analysis_status: AnalysisStatus;
+  analyzed_at: string | null;
   status: MeetingStatus;
   meeting_rating: number | null;
   conclude_notes: string | null;
@@ -171,6 +175,7 @@ export interface ScorecardMetric {
   goal: string | null;
   unit: string | null;
   frequency: 'weekly' | 'monthly' | 'quarterly';
+  description: string | null;
   sort_order: number;
   active: boolean;
   created_by: string;
@@ -181,11 +186,14 @@ export interface ScorecardMetric {
 export interface ScorecardEntry {
   id: string;
   metric_id: string;
-  meeting_id: string;
+  meeting_id: string | null;
+  period_date: string | null;
+  source: 'manual' | 'taxdome';
+  import_id: string | null;
   value: string | null;
   on_track: boolean | null;
   notes: string | null;
-  created_by: string;
+  created_by: string | null;
   created_at: string;
 }
 
@@ -217,4 +225,47 @@ export interface EOSAnalysisResult {
   issues_new: Array<{ title: string; description?: string; priority?: IssuePriority }>;
   scorecard: Array<{ title: string; owner?: string; goal?: string; value?: string; on_track?: boolean }>;
   summary: string;
+}
+
+// ── Meeting session analysis (transcript → structured EOS data) ────────────
+
+export type AnalysisStatus = 'none' | 'ready' | 'committed';
+
+export interface MeetingAnalysis {
+  summary: string;
+  decisions: Decision[];
+  actions: ActionItem[];
+  discussion: DiscussionPoint[];
+  headlines: Array<{ type: HeadlineType; text: string; presenter: string | null }>;
+  rocks: Array<{ title: string; owner: string | null; status: RockStatus; notes: string | null }>;
+  todos_new: Array<{ title: string; owner: string | null }>;
+  todos_reviewed: Array<{ title: string; status: TodoStatus }>;
+  issues_new: Array<{ title: string; description: string | null; priority: IssuePriority }>;
+  issues_solved: Array<{ title: string; resolution: string | null }>;
+  meeting_rating: number | null;
+  conclude_notes: string | null;
+}
+
+// ── TaxDome report import ──────────────────────────────────────────────────
+
+export interface ScorecardExtraction {
+  report_title: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  values: Array<{ metric_id: string; value: string; on_track: boolean | null; notes: string | null }>;
+  unmatched: Array<{ label: string; value: string }>;
+}
+
+export interface TaxDomeImport {
+  id: string;
+  received_at: string;
+  file_name: string | null;
+  report_title: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  raw_text: string | null;
+  extracted: ScorecardExtraction | null;
+  status: 'processed' | 'failed';
+  error: string | null;
+  entries_written: number;
 }

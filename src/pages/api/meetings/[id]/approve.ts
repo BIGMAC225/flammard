@@ -2,7 +2,8 @@ import type { APIRoute } from 'astro';
 import { createSupabaseServerClient, createServiceClient } from '../../../../lib/supabase-server';
 import { hashMinutes } from '../../../../lib/crypto';
 import { generateMinutesPDF } from '../../../../lib/pdf';
-import type { Attendee } from '../../../../types';
+import type { PDFScorecardRow } from '../../../../lib/pdf';
+import type { Attendee, ScorecardEntry, ScorecardMetric } from '../../../../types';
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const supabase = createSupabaseServerClient(request, cookies);
@@ -22,7 +23,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   // Load meeting + minutes
   const { data: meeting } = await supabase
     .from('meetings')
-    .select('id, title, date, location, attendees, created_by')
+    .select('id, title, date, location, attendees, created_by, meeting_rating, conclude_notes')
     .eq('id', id)
     .single();
 
@@ -57,6 +58,34 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     discussion: minutes.discussion,
   });
 
+  // EOS sections for this meeting, plus the latest scorecard value per
+  // metric as of the meeting date
+  const [
+    { data: headlines },
+    { data: rocks },
+    { data: todos },
+    { data: issues },
+    { data: metrics },
+    { data: entries },
+  ] = await Promise.all([
+    supabase.from('headlines').select('*').eq('meeting_id', id).order('created_at'),
+    supabase.from('meeting_rocks').select('*').eq('meeting_id', id).order('created_at'),
+    supabase.from('todos').select('*').eq('meeting_id', id).order('created_at'),
+    supabase.from('issues').select('*').eq('meeting_id', id).order('created_at'),
+    supabase.from('scorecard_metrics').select('*').eq('active', true).order('sort_order'),
+    supabase
+      .from('scorecard_entries')
+      .select('*')
+      .lte('period_date', meeting.date)
+      .order('period_date', { ascending: false }),
+  ]);
+
+  const scorecard: PDFScorecardRow[] = ((metrics ?? []) as ScorecardMetric[]).flatMap((m) => {
+    const latest = ((entries ?? []) as ScorecardEntry[]).find((e) => e.metric_id === m.id);
+    if (!latest) return [];
+    return [{ title: m.title, goal: m.goal, value: latest.value, on_track: latest.on_track, period_date: latest.period_date }];
+  });
+
   // Generate PDF
   const pdfBuffer = await generateMinutesPDF({
     title: meeting.title,
@@ -71,6 +100,15 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     approvedBy: approverEmail,
     approvedAt,
     appName: import.meta.env.PUBLIC_APP_NAME || 'Flammard',
+    eos: {
+      headlines: headlines ?? [],
+      scorecard,
+      rocks: rocks ?? [],
+      todos: todos ?? [],
+      issues: issues ?? [],
+      meetingRating: meeting.meeting_rating ?? null,
+      concludeNotes: meeting.conclude_notes ?? null,
+    },
   });
 
   // Store PDF in Supabase Storage (service client bypasses storage RLS)
