@@ -16,8 +16,8 @@ export async function loadStepParent(type: StepParentType, id: string) {
   return one<{ id: string; title: string; description: string | null; owner: string | null; team: string; meeting: string | null }>(
     db.query(
       `select x.id, x.title, ${type === 'issue' ? 'x.description' : 'null::text as description'}, ${type === 'issue' ? 'null::text as owner' : 'x.owner'},
-              m.team, m.title || ' · ' || m.date::text as meeting
-       from ${table} x join meetings m on m.id = x.meeting_id where x.id = $1`,
+              x.team, m.title || ' · ' || m.date::text as meeting
+       from ${table} x left join meetings m on m.id = x.meeting_id where x.id = $1`,
       [id]
     )
   );

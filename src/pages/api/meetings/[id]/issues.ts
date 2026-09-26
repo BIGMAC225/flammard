@@ -1,21 +1,15 @@
 import type { APIRoute } from 'astro';
-import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
-import { one, sql } from '../../../../lib/db';
+import { getMeeting, json, notFound, readBody, requireAuth } from '../../../../lib/api';
+import { insertIssue } from '../../../../lib/issues';
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const { title, description, priority } = await request.json();
-  if (!title?.trim()) return json({ error: 'Title required' }, 400);
-
-  const meeting = await getMeeting(params.id, 'id');
+  const meeting = await getMeeting<{ id: string; team: string }>(params.id, 'id, team');
   if (!meeting) return notFound();
 
-  const issue = await one(sql()`
-    insert into issues (meeting_id, title, description, priority, status)
-    values (${meeting.id}, ${title.trim()}, ${description ?? null}, ${priority ?? 'medium'}, 'open')
-    returning *
-  `);
-  return json({ issue });
+  const result = await insertIssue(await readBody(request), meeting.team, meeting.id);
+  if ('error' in result) return json({ error: result.error }, 400);
+  return json({ issue: result.issue });
 };

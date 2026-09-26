@@ -1,118 +1,74 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
-import StepsPanel from '../../components/StepsPanel';
+import IssuesBoard, { type BoardIssue } from '../../components/IssuesBoard';
 import { many, sql } from '../../lib/db';
 import { stepsForMany } from '../../lib/steps';
 import { currentTeam, teamLabel } from '../../lib/teams';
-import type { Issue } from '../../types';
 
 const team = currentTeam(Astro.cookies);
-const rows = await many<Issue & { meeting_title: string; meeting_date: string }>(sql()`
-  select i.*, m.title as meeting_title, m.date::text as meeting_date
-  from issues i join meetings m on m.id = i.meeting_id
-  where m.team = ${team}
-  order by i.status asc, case i.priority when 'high' then 0 when 'medium' then 1 else 2 end, i.created_at desc
+const issues = await many<BoardIssue>(sql()`
+  select i.*, i.created_at::text as created_at, i.updated_at::text as updated_at,
+         m.title as meeting_title, m.date::text as meeting_date
+  from issues i left join meetings m on m.id = i.meeting_id
+  where i.team = ${team}
+  order by i.horizon, i.rank nulls last, i.created_at
 `);
-const issues = rows.map((i) => ({ ...i, meetings: { title: i.meeting_title, date: i.meeting_date } }));
-const stepsByIssue = await stepsForMany('issue', issues.filter((i) => i.status === 'open').map((i) => i.id));
 
-const open = issues?.filter(i => i.status === 'open') ?? [];
-const solved = issues?.filter(i => i.status === 'solved') ?? [];
-const dropped = issues?.filter(i => i.status === 'dropped') ?? [];
-
-const PRIORITY_DOT: Record<string, string> = {
-  high: 'bg-state-danger',
-  medium: 'bg-state-warning',
-  low: 'bg-ink-muted',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  open: 'badge bg-state-danger/15 text-state-danger',
-  solved: 'badge bg-state-success/15 text-state-success',
-  dropped: 'badge bg-bg-elevated text-ink-muted',
-};
+const open = issues.filter((i) => i.status === 'open');
+const closed = issues
+  .filter((i) => i.status !== 'open')
+  .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+const solvedCount = closed.filter((i) => i.status === 'solved').length;
+const droppedCount = closed.length - solvedCount;
+const shortOpen = open.filter((i) => i.horizon === 'short').length;
+const longOpen = open.length - shortOpen;
+const stepsByIssue = await stepsForMany('issue', open.map((i) => i.id));
+const initialTab = Astro.url.searchParams.get('list') === 'long' ? 'long' : 'short';
 ---
 
-<Dashboard eyebrow={teamLabel(team)} title="Issues" description="IDS items across all L10 meetings.">
-  {open.length > 0 && (
+<Dashboard eyebrow={teamLabel(team)} title="Issues" description="Ranked IDS list, plus the long-term issues you have parked.">
+  {shortOpen > 0 && (
     <div slot="actions" class="text-right">
-      <div class="font-display text-3xl font-semibold tracking-tight text-red-800 tabular-nums">{open.length}</div>
-      <div class="eyebrow">open</div>
+      <div class="font-display text-3xl font-semibold tracking-tight text-red-800 tabular-nums">{shortOpen}</div>
+      <div class="eyebrow">open short-term</div>
     </div>
   )}
 
-  <!-- Stats -->
-  {issues && issues.length > 0 && (
-    <div class="grid grid-cols-3 gap-4 mb-8">
-      {[
-        { label: 'Open', val: open.length, cls: 'text-state-danger' },
-        { label: 'Solved', val: solved.length, cls: 'text-state-success' },
-        { label: 'Dropped', val: dropped.length, cls: 'text-ink-muted' },
-      ].map(({ label, val, cls }) => (
-        <div class="stat-tile">
-          <p class="stat-tile-label">{label}</p>
-          <p class={`stat-tile-value ${cls}`}>{val}</p>
-        </div>
-      ))}
-    </div>
-  )}
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+    {[
+      { label: 'Short-term', val: shortOpen, cls: 'text-state-danger' },
+      { label: 'Long-term', val: longOpen, cls: 'text-state-warning' },
+      { label: 'Solved', val: solvedCount, cls: 'text-state-success' },
+      { label: 'Dropped', val: droppedCount, cls: 'text-ink-muted' },
+    ].map(({ label, val, cls }) => (
+      <div class="stat-tile">
+        <p class="stat-tile-label">{label}</p>
+        <p class={`stat-tile-value ${cls}`}>{val}</p>
+      </div>
+    ))}
+  </div>
 
-  {!issues?.length ? (
-    <div class="card text-center py-12">
-      <p class="text-sm text-ink-secondary mb-2">No issues yet.</p>
-      <p class="text-xs text-ink-muted">Issues are created when you upload an EOS recap or add them in a meeting.</p>
-    </div>
-  ) : (
-    <div class="space-y-6">
-      {open.length > 0 && (
-        <div>
-          <p class="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">
-            Open <span class="font-normal ml-1">({open.length})</span>
-          </p>
-          <div class="border border-line rounded-xl overflow-hidden">
-            {open.map((issue, i) => (
-              <div class={`flex items-start gap-4 px-5 py-4 ${i < open.length - 1 ? 'border-b border-line' : ''}`}>
-                <div class={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${PRIORITY_DOT[issue.priority]}`} title={`${issue.priority} priority`} />
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-medium text-ink-primary">{issue.title}</p>
-                  {issue.description && (
-                    <p class="text-xs text-ink-muted mt-0.5 truncate">{issue.description}</p>
-                  )}
-                  {issue.meetings && (
-                    <a href={`/dashboard/meetings/${issue.meeting_id}?tab=eos`} class="text-xs text-accent hover:text-accent-dim transition-colors mt-0.5 inline-block">
-                      {issue.meetings.title} · {issue.meetings.date}
-                    </a>
-                  )}
-                  <StepsPanel type="issue" parentId={issue.id} parentTitle={issue.title} initialSteps={stepsByIssue[issue.id] ?? []} client:visible />
-                </div>
-                <span class="text-xs text-ink-muted capitalize flex-shrink-0">{issue.priority}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+  <IssuesBoard initialIssues={open} stepsByIssue={stepsByIssue} initialTab={initialTab} client:load />
 
-      {solved.length > 0 && (
-        <div>
-          <p class="text-xs font-semibold text-ink-muted uppercase tracking-wide mb-2">
-            Solved <span class="font-normal ml-1">({solved.length})</span>
-          </p>
-          <div class="border border-line rounded-xl overflow-hidden">
-            {solved.map((issue, i) => (
-              <div class={`flex items-start gap-4 px-5 py-4 ${i < solved.length - 1 ? 'border-b border-line' : ''}`}>
-                <div class="w-2 h-2 rounded-full flex-shrink-0 mt-1.5 bg-state-success" />
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm text-ink-secondary">{issue.title}</p>
-                  {issue.resolution && (
-                    <p class="text-xs text-ink-muted mt-0.5">↳ {issue.resolution}</p>
-                  )}
-                </div>
-                <span class={STATUS_COLORS['solved']}>Solved</span>
-              </div>
-            ))}
+  {closed.length > 0 && (
+    <details class="mt-10">
+      <summary class="text-xs font-semibold text-ink-muted uppercase tracking-wide cursor-pointer select-none">
+        Solved &amp; dropped <span class="font-normal ml-1">({closed.length})</span>
+      </summary>
+      <div class="border border-line rounded-xl overflow-hidden mt-2">
+        {closed.map((issue, i) => (
+          <div class={`flex items-start gap-4 px-5 py-3 ${i < closed.length - 1 ? 'border-b border-line' : ''}`}>
+            <div class={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${issue.status === 'solved' ? 'bg-state-success' : 'bg-ink-muted'}`} />
+            <div class="flex-1 min-w-0">
+              <p class="text-sm text-ink-secondary">{issue.title}</p>
+              {issue.resolution && <p class="text-xs text-ink-muted mt-0.5">↳ {issue.resolution}</p>}
+            </div>
+            <span class={issue.status === 'solved' ? 'badge bg-state-success/15 text-state-success' : 'badge bg-bg-elevated text-ink-muted'}>
+              {issue.status === 'solved' ? 'Solved' : 'Dropped'}
+            </span>
           </div>
-        </div>
-      )}
-    </div>
+        ))}
+      </div>
+    </details>
   )}
 </Dashboard>

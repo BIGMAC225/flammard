@@ -130,7 +130,8 @@ export interface MeetingRock {
 
 export interface Todo {
   id: string;
-  meeting_id: string;
+  meeting_id: string | null;
+  team: string;
   title: string;
   owner: string | null;
   status: TodoStatus;
@@ -139,9 +140,14 @@ export interface Todo {
   updated_at: string;
 }
 
+export type IssueHorizon = 'short' | 'long';
+
 export interface Issue {
   id: string;
-  meeting_id: string;
+  meeting_id: string | null;
+  team: string;
+  horizon: IssueHorizon;
+  rank: number | null;
   title: string;
   description: string | null;
   priority: IssuePriority;

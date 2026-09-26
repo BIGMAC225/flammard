@@ -233,6 +233,27 @@ alter table rocks             add column if not exists team text not null defaul
 alter table scorecard_metrics add column if not exists team text not null default 'leadership' check (team in ('leadership', 'management'));
 alter table taxdome_imports   add column if not exists team text not null default 'leadership' check (team in ('leadership', 'management'));
 
+-- To-dos and issues can exist without a meeting (added from their own pages),
+-- so they carry their team directly. Issues also get a rank (1 = top) and a
+-- horizon: 'short' is the working IDS list, 'long' the long-term issues list.
+alter table todos  alter column meeting_id drop not null;
+alter table issues alter column meeting_id drop not null;
+alter table todos  add column if not exists team text not null default 'leadership' check (team in ('leadership', 'management'));
+alter table issues add column if not exists team text not null default 'leadership' check (team in ('leadership', 'management'));
+update todos  x set team = m.team from meetings m where m.id = x.meeting_id and x.team <> m.team;
+update issues x set team = m.team from meetings m where m.id = x.meeting_id and x.team <> m.team;
+alter table issues add column if not exists horizon text not null default 'short' check (horizon in ('short', 'long'));
+alter table issues add column if not exists rank integer;
+update issues x set rank = r.n + coalesce((select max(y.rank) from issues y where y.team = r.team and y.horizon = r.horizon), 0)
+from (
+  select id, team, horizon, row_number() over (
+    partition by team, horizon
+    order by case priority when 'high' then 0 when 'medium' then 1 else 2 end, created_at
+  ) as n
+  from issues where rank is null
+) r
+where r.id = x.id;
+
 -- ── Indexes ───────────────────────────────────────────────────────────────
 create index if not exists meetings_date_idx        on meetings(date desc);
 create index if not exists meetings_team_idx        on meetings(team);
@@ -245,5 +266,7 @@ create index if not exists todos_meeting_idx        on todos(meeting_id);
 create index if not exists todos_status_idx         on todos(status);
 create index if not exists issues_meeting_idx       on issues(meeting_id);
 create index if not exists issues_status_idx        on issues(status);
+create index if not exists issues_team_rank_idx     on issues(team, horizon, rank);
+create index if not exists todos_team_idx           on todos(team, status);
 create index if not exists headlines_meeting_idx    on headlines(meeting_id);
 create index if not exists scorecard_entries_period_idx on scorecard_entries(period_date desc);
