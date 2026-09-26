@@ -20,8 +20,10 @@ const MIME_CANDIDATES: Array<[string, string]> = [
   ['audio/mp4', 'm4a'],
 ];
 
-// Serverless request bodies are capped at 6 MB, so the audio goes up in pieces
-const CHUNK_BYTES = 4 * 1024 * 1024;
+// Serverless request bodies are capped at 6 MB (after base64), so the audio
+// goes up in 3 MB pieces — and comes back the same way, since streamed
+// responses cap at 20 MB and a full L10 is bigger than that.
+const CHUNK_BYTES = 3 * 1024 * 1024;
 
 const formatTime = (s: number) =>
   `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -43,6 +45,7 @@ export default function MeetingSession(props: Props) {
   const [elapsed, setElapsed] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [downloadPct, setDownloadPct] = useState<number | null>(null);
 
   const [pasteMode, setPasteMode] = useState(false);
   const [pasted, setPasted] = useState('');
@@ -167,6 +170,34 @@ export default function MeetingSession(props: Props) {
     } finally {
       setUploading(false);
       setUploadPct(null);
+    }
+  };
+
+  // Fetches the chunks and hands the browser one file for Vibe
+  const downloadRecording = async () => {
+    setError('');
+    setDownloadPct(0);
+    try {
+      const manifest = await fetch(`/api/meetings/${meetingId}/recording`);
+      if (!manifest.ok) throw new Error((await manifest.json()).error ?? 'No recording');
+      const { parts, mime, fileName } = (await manifest.json()) as { parts: number; mime: string; fileName: string };
+      const pieces: Blob[] = [];
+      for (let part = 0; part < parts; part++) {
+        const res = await fetch(`/api/meetings/${meetingId}/recording/chunk?part=${part}`);
+        if (!res.ok) throw new Error(`Could not read part ${part + 1} of ${parts}`);
+        pieces.push(await res.blob());
+        setDownloadPct(Math.round(((part + 1) / parts) * 100));
+      }
+      const url = URL.createObjectURL(new Blob(pieces, { type: mime }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Download failed');
+    } finally {
+      setDownloadPct(null);
     }
   };
 
@@ -312,9 +343,9 @@ export default function MeetingSession(props: Props) {
             </p>
           </div>
           {hasRecording && !recording && (
-            <a href={`/api/meetings/${meetingId}/recording`} className="btn-secondary text-xs py-1.5 flex-shrink-0">
-              Download audio for Vibe
-            </a>
+            <button onClick={downloadRecording} disabled={downloadPct !== null} className="btn-secondary text-xs py-1.5 flex-shrink-0">
+              {downloadPct !== null ? `Preparing… ${downloadPct}%` : 'Download audio for Vibe'}
+            </button>
           )}
         </div>
 

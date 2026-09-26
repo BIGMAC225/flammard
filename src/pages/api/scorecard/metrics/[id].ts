@@ -1,14 +1,16 @@
 import type { APIRoute } from 'astro';
-import { json, requireAuth } from '../../../../lib/api';
+import { json, readBody, requireAuth, requireEnum, requireUuid } from '../../../../lib/api';
 import { buildUpdate, sql } from '../../../../lib/db';
 
 const EDITABLE = ['title', 'owner', 'goal', 'unit', 'description', 'frequency', 'active', 'sort_order'];
 
 export const PATCH: APIRoute = async ({ params, request, cookies }) => {
-  const denied = requireAuth(cookies);
+  const denied = requireAuth(cookies) ?? requireUuid(params.id);
   if (denied) return denied;
 
-  const body = await request.json();
+  const body = await readBody(request);
+  const invalid = requireEnum(body, 'frequency', ['weekly', 'monthly', 'quarterly']);
+  if (invalid) return invalid;
   const clean: Record<string, unknown> = {};
   for (const key of EDITABLE) {
     if (key in body) clean[key] = typeof body[key] === 'string' ? body[key].trim() || null : body[key];
@@ -23,7 +25,7 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
 };
 
 export const DELETE: APIRoute = async ({ params, cookies }) => {
-  const denied = requireAuth(cookies);
+  const denied = requireAuth(cookies) ?? requireUuid(params.id);
   if (denied) return denied;
   await sql()`delete from scorecard_metrics where id = ${params.id!}`;
   return json({ ok: true });

@@ -7,6 +7,7 @@ import { many, one, sql } from '../../../lib/db';
 import { extractScorecardFromReport } from '../../../lib/claude';
 import { streamJSON } from '../../../lib/stream-json';
 import { isTeam } from '../../../lib/teams';
+import { env } from '../../../lib/env';
 import type { ScorecardMetric } from '../../../types';
 
 // Inbound webhook for TaxDome report exports, called by Zapier when the
@@ -48,7 +49,7 @@ async function pdfToText(pdf: Buffer): Promise<string> {
 }
 
 export const POST: APIRoute = async ({ request, url }) => {
-  const secret = import.meta.env.TAXDOME_WEBHOOK_SECRET;
+  const secret = env('TAXDOME_WEBHOOK_SECRET');
   const teamParam = url.searchParams.get('team') ?? 'leadership';
   if (!isTeam(teamParam)) return json({ error: 'Unknown team' }, 400);
   const team = teamParam;
@@ -158,14 +159,18 @@ export const POST: APIRoute = async ({ request, url }) => {
     if (!importRow) return fail('Saving import failed');
 
     try {
-      for (const v of extracted.values) {
-        await db`
-          insert into scorecard_entries (metric_id, period_date, value, on_track, notes, source, import_id)
-          values (${v.metric_id}, ${periodDate}, ${v.value}, ${v.on_track}, ${v.notes}, 'taxdome', ${importRow.id})
-          on conflict (metric_id, period_date) do update set
-            value = excluded.value, on_track = excluded.on_track, notes = excluded.notes,
-            source = 'taxdome', import_id = excluded.import_id
-        `;
+      const rowId = importRow.id;
+      if (extracted.values.length) {
+        await db.transaction(
+          extracted.values.map(
+            (v) => db`
+              insert into scorecard_entries (metric_id, period_date, value, on_track, notes, source, import_id)
+              values (${v.metric_id}, ${periodDate}, ${v.value}, ${v.on_track}, ${v.notes}, 'taxdome', ${rowId})
+              on conflict (metric_id, period_date) do update set
+                value = excluded.value, on_track = excluded.on_track, notes = excluded.notes,
+                source = 'taxdome', import_id = excluded.import_id`
+          )
+        );
       }
     } catch (err) {
       const message = `Saving entries failed: ${err instanceof Error ? err.message : 'unknown'}`;

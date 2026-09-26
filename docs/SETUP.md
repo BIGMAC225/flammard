@@ -36,7 +36,7 @@ Free tier: 0.5 GB storage, scales to zero when idle, no pausing.
 | `PUBLIC_APP_NAME` | optional | Name in the header and PDF. Default `Flammard`. |
 | `PUBLIC_TEAM_LABEL` | optional | Who "approved" the minutes, e.g. `Leadership team`. |
 
-Redeploy after changing them.
+Set each variable's scope to **All scopes** (builds and functions — the default), then **trigger a new deploy**: Astro evaluates secrets at build time as well as at runtime, so a variable added after the last build isn't picked up until the next one.
 
 ## 4. Blobs
 
@@ -53,4 +53,4 @@ cp .env.example .env     # fill in NETLIFY_DATABASE_URL and SHARED_PASSWORD
 npx netlify dev          # runs Astro with Blobs + env wired up like production
 ```
 
-`npm run dev` also works for pages that don't touch Blobs.
+`npm run dev` also works; the Netlify adapter emulates Blobs locally, and `NETLIFY_DATABASE_URL` comes from `.env`.

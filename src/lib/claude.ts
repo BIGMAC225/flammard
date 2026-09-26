@@ -1,13 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
+import { env } from './env';
 import type { MeetingAnalysis, ScorecardExtraction, ScorecardMetric } from '../types';
 
 const MODEL = 'claude-opus-5';
 
 let _client: Anthropic | null = null;
 function client(): Anthropic {
-  const apiKey = import.meta.env.ANTHROPIC_API_KEY;
+  const apiKey = env('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
   return (_client ??= new Anthropic({ apiKey }));
 }

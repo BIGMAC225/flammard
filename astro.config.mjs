@@ -5,6 +5,10 @@ import tailwind from '@astrojs/tailwind';
 
 export default defineConfig({
   output: 'server',
+  // Zapier posts multipart with no Origin header; the built-in CSRF check
+  // would 403 it. Mutating routes are protected by the SameSite=Lax session
+  // cookie or the webhook's bearer secret instead.
+  security: { checkOrigin: false },
   adapter: netlify({ edgeMiddleware: false }),
   integrations: [
     react(),

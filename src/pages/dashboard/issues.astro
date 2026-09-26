@@ -9,7 +9,7 @@ const rows = await many<Issue & { meeting_title: string; meeting_date: string }>
   select i.*, m.title as meeting_title, m.date::text as meeting_date
   from issues i join meetings m on m.id = i.meeting_id
   where m.team = ${team}
-  order by i.status asc, i.priority desc, i.created_at desc
+  order by i.status asc, case i.priority when 'high' then 0 when 'medium' then 1 else 2 end, i.created_at desc
 `);
 const issues = rows.map((i) => ({ ...i, meetings: { title: i.meeting_title, date: i.meeting_date } }));
 

@@ -1,8 +1,9 @@
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
+import { env } from './env';
 
 // Netlify DB injects NETLIFY_DATABASE_URL; DATABASE_URL is the fallback for
 // local development against any Postgres.
-const url = import.meta.env.NETLIFY_DATABASE_URL || import.meta.env.DATABASE_URL;
+const url = () => env('NETLIFY_DATABASE_URL') || env('DATABASE_URL');
 
 let _sql: NeonQueryFunction<false, false> | null = null;
 
@@ -13,12 +14,14 @@ export type Rows = Promise<Record<string, any>[]>;
  * Tagged-template SQL over Neon's HTTP driver (one request per query, no
  * connection pool to manage — right for serverless).
  *
- *   const rows = await sql`select * from meetings where id = ${id}`;
- *   await sql.query('update todos set status = $1 where id = $2', [status, id]);
+ *   const rows = await sql()`select * from meetings where id = ${id}`;
+ *   await sql().query('update todos set status = $1 where id = $2', [status, id]);
+ *   await sql().transaction([q1, q2]);   // all-or-nothing, statements sent together
  */
 export function sql(): NeonQueryFunction<false, false> {
-  if (!url) throw new Error('NETLIFY_DATABASE_URL is not configured');
-  return (_sql ??= neon<false, false>(url));
+  const u = url();
+  if (!u) throw new Error('NETLIFY_DATABASE_URL is not configured');
+  return (_sql ??= neon<false, false>(u));
 }
 
 /** First row of a query result, typed by the caller. */

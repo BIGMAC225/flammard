@@ -1,126 +1,115 @@
 import type { APIRoute } from 'astro';
 import { getMeeting, json, notFound, requireAuth } from '../../../../lib/api';
-import { one, sql } from '../../../../lib/db';
+import { sql } from '../../../../lib/db';
 import type { MeetingAnalysis } from '../../../../types';
 
-// Writes the reviewed (checkbox-filtered) analysis into the real tables.
-// Re-committing replaces what the previous commit added for this meeting
-// (headlines, rock snapshots, to-dos, issues raised here) so accepting twice
-// doesn't duplicate anything. Runs in one transaction.
+// Writes the reviewed (checkbox-filtered) analysis into the real tables in
+// one transaction. Committing again first undoes everything the previous
+// commit did — items added under this meeting, and older to-dos/issues it
+// closed — so accepting twice (or retrying after a failure) never duplicates.
+//
+// Neon's HTTP driver only runs non-interactive transactions (every statement
+// is sent at once), so the find-or-create steps are single statements built
+// from CTEs instead of read-then-write.
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const meeting = await getMeeting<{ id: string; status: string; analysis_status: string; team: string }>(
-    params.id,
-    'id, status, analysis_status, team'
-  );
+  const meeting = await getMeeting<{ id: string; team: string }>(params.id, 'id, team');
   if (!meeting) return notFound();
 
   const a = (await request.json()) as MeetingAnalysis;
   const id = meeting.id;
+  const team = meeting.team;
   const db = sql();
 
-  try {
-    // Neon's HTTP driver has no interactive transactions; a single multi-
-    // statement function body is the equivalent. Build it as one DO block
-    // with parameters passed through a temp table would be overkill, so we
-    // run the statements sequentially and rely on the "replace" semantics
-    // to make a retry safe.
-    if (meeting.analysis_status === 'committed') {
-      await db`delete from headlines where meeting_id = ${id}`;
-      await db`delete from meeting_rocks where meeting_id = ${id}`;
-      await db`delete from todos where meeting_id = ${id}`;
-      await db`delete from issues where meeting_id = ${id}`;
-    }
+  const queries = [
+    // ── Undo the previous commit of this meeting ────────────────────────
+    db`update todos set status = 'open', resolved_meeting_id = null, updated_at = now()
+       where resolved_meeting_id = ${id} and meeting_id <> ${id}`,
+    db`update issues set status = 'open', resolution = null, resolved_in_meeting_id = null, updated_at = now()
+       where resolved_in_meeting_id = ${id} and meeting_id <> ${id}`,
+    db`delete from headlines where meeting_id = ${id}`,
+    db`delete from meeting_rocks where meeting_id = ${id}`,
+    db`delete from todos where meeting_id = ${id}`,
+    db`delete from issues where meeting_id = ${id}`,
 
-    // ── Minutes (skip if already sealed) ──────────────────────────────────
-    const existing = await one<{ sealed_at: string | null }>(db`select sealed_at from minutes where meeting_id = ${id}`);
-    if (!existing?.sealed_at) {
-      await db`
-        insert into minutes (meeting_id, summary, decisions, actions, discussion)
-        values (${id}, ${a.summary}, ${JSON.stringify(a.decisions)}::jsonb, ${JSON.stringify(a.actions)}::jsonb, ${JSON.stringify(a.discussion)}::jsonb)
-        on conflict (meeting_id) do update set
-          summary = excluded.summary, decisions = excluded.decisions,
-          actions = excluded.actions, discussion = excluded.discussion, updated_at = now()
-      `;
-    }
+    // ── Minutes (left alone once sealed) ────────────────────────────────
+    db`insert into minutes (meeting_id, summary, decisions, actions, discussion)
+       values (${id}, ${a.summary}, ${JSON.stringify(a.decisions)}::jsonb, ${JSON.stringify(a.actions)}::jsonb, ${JSON.stringify(a.discussion)}::jsonb)
+       on conflict (meeting_id) do update set
+         summary = excluded.summary, decisions = excluded.decisions,
+         actions = excluded.actions, discussion = excluded.discussion, updated_at = now()
+       where minutes.sealed_at is null`,
 
-    // ── Headlines ─────────────────────────────────────────────────────────
-    for (const h of a.headlines) {
-      await db`insert into headlines (meeting_id, type, text, presenter) values (${id}, ${h.type}, ${h.text}, ${h.presenter})`;
-    }
+    // ── Headlines ───────────────────────────────────────────────────────
+    ...a.headlines.map(
+      (h) => db`insert into headlines (meeting_id, type, text, presenter) values (${id}, ${h.type}, ${h.text}, ${h.presenter})`
+    ),
 
-    // ── Rocks: update the master rock, snapshot it for this meeting ───────
-    for (const r of a.rocks) {
-      let master = await one<{ id: string }>(
-        db`select id from rocks where team = ${meeting.team} and lower(title) = lower(${r.title}) limit 1`
-      );
-      if (master) {
-        await db`
+    // ── Rocks: update the team's master rock (or create it), then snapshot
+    ...a.rocks.map(
+      (r) => db`
+        with found as (
+          select id from rocks where team = ${team} and lower(title) = lower(${r.title}) limit 1
+        ), updated as (
           update rocks set status = ${r.status}, owner = coalesce(${r.owner}, owner), updated_at = now()
-          where id = ${master.id}
-        `;
-      } else {
-        master = await one<{ id: string }>(db`
+          where id in (select id from found) returning id
+        ), created as (
           insert into rocks (team, title, owner, status, notes)
-          values (${meeting.team}, ${r.title}, ${r.owner}, ${r.status}, ${r.notes}) returning id
-        `);
-      }
-      await db`
+          select ${team}, ${r.title}, ${r.owner}, ${r.status}, ${r.notes}
+          where not exists (select 1 from found) returning id
+        )
         insert into meeting_rocks (meeting_id, rock_id, title, owner, status, notes)
-        values (${id}, ${master?.id ?? null}, ${r.title}, ${r.owner}, ${r.status}, ${r.notes})
-      `;
-    }
+        values (${id}, coalesce((select id from updated), (select id from created)), ${r.title}, ${r.owner}, ${r.status}, ${r.notes})`
+    ),
 
-    // ── To-dos ────────────────────────────────────────────────────────────
-    for (const t of a.todos_new) {
-      await db`insert into todos (meeting_id, title, owner, status) values (${id}, ${t.title}, ${t.owner}, 'open')`;
-    }
-    for (const t of a.todos_reviewed) {
-      if (t.status === 'open') continue;
-      await db`
-        update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now()
-        where id = (
-          select t.id from todos t join meetings m on m.id = t.meeting_id
-          where m.team = ${meeting.team} and t.status = 'open' and lower(t.title) = lower(${t.title}) limit 1
-        )
-      `;
-    }
+    // ── To-dos ──────────────────────────────────────────────────────────
+    ...a.todos_new.map(
+      (t) => db`insert into todos (meeting_id, title, owner, status) values (${id}, ${t.title}, ${t.owner}, 'open')`
+    ),
+    ...a.todos_reviewed
+      .filter((t) => t.status !== 'open')
+      .map(
+        (t) => db`
+          update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now()
+          where id = (
+            select t.id from todos t join meetings m on m.id = t.meeting_id
+            where m.team = ${team} and t.status = 'open' and lower(t.title) = lower(${t.title}) limit 1
+          )`
+      ),
 
-    // ── Issues ────────────────────────────────────────────────────────────
-    for (const i of a.issues_new) {
-      await db`
+    // ── Issues ──────────────────────────────────────────────────────────
+    ...a.issues_new.map(
+      (i) => db`
         insert into issues (meeting_id, title, description, priority, status)
-        values (${id}, ${i.title}, ${i.description}, ${i.priority}, 'open')
-      `;
-    }
-    for (const i of a.issues_solved) {
-      const rows = await db`
-        update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, updated_at = now()
-        where id = (
-          select i.id from issues i join meetings m on m.id = i.meeting_id
-          where m.team = ${meeting.team} and i.status = 'open' and lower(i.title) = lower(${i.title}) limit 1
+        values (${id}, ${i.title}, ${i.description}, ${i.priority}, 'open')`
+    ),
+    ...a.issues_solved.map(
+      (i) => db`
+        with solved as (
+          update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, updated_at = now()
+          where id = (
+            select i.id from issues i join meetings m on m.id = i.meeting_id
+            where m.team = ${team} and i.status = 'open' and lower(i.title) = lower(${i.title}) limit 1
+          ) returning id
         )
-        returning id
-      `;
-      if (!rows.length) {
-        await db`
-          insert into issues (meeting_id, title, resolution, status, resolved_in_meeting_id, priority)
-          values (${id}, ${i.title}, ${i.resolution}, 'solved', ${id}, 'medium')
-        `;
-      }
-    }
+        insert into issues (meeting_id, title, resolution, status, resolved_in_meeting_id, priority)
+        select ${id}, ${i.title}, ${i.resolution}, 'solved', ${id}, 'medium'
+        where not exists (select 1 from solved)`
+    ),
 
-    // ── Meeting metadata ──────────────────────────────────────────────────
-    await db`
-      update meetings
-      set meeting_rating = ${a.meeting_rating}, conclude_notes = ${a.conclude_notes}, eos_analyzed = true,
-          analysis = ${JSON.stringify(a)}::jsonb, analysis_status = 'committed',
-          status = case when status = 'draft' then 'minutes_draft' else status end,
-          updated_at = now()
-      where id = ${id}
-    `;
+    // ── Meeting metadata ────────────────────────────────────────────────
+    db`update meetings
+       set meeting_rating = ${a.meeting_rating}, conclude_notes = ${a.conclude_notes}, eos_analyzed = true,
+           analysis = ${JSON.stringify(a)}::jsonb, analysis_status = 'committed',
+           status = case when status = 'draft' then 'minutes_draft' else status end,
+           updated_at = now()
+       where id = ${id}`,
+  ];
+
+  try {
+    await db.transaction(queries);
   } catch (err) {
     return json({ error: `Could not save: ${err instanceof Error ? err.message : 'unknown error'}` }, 500);
   }

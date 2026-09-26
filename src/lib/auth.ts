@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { AstroCookies } from 'astro';
+import { env } from './env';
 
 // One shared team password (SHARED_PASSWORD). A successful login sets a
 // signed, HttpOnly cookie; nothing about the user is stored server-side.
@@ -8,7 +9,7 @@ export const SESSION_COOKIE = 'flammard_session';
 const SESSION_DAYS = 30;
 
 function secret(): string {
-  const s = import.meta.env.SESSION_SECRET || import.meta.env.SHARED_PASSWORD;
+  const s = env('SESSION_SECRET') || env('SHARED_PASSWORD');
   if (!s) throw new Error('SHARED_PASSWORD is not configured');
   return `flammard:${s}`;
 }
@@ -22,7 +23,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export function passwordMatches(candidate: string): boolean {
-  const expected = import.meta.env.SHARED_PASSWORD;
+  const expected = env('SHARED_PASSWORD');
   return !!expected && safeEqual(candidate, expected);
 }
 
@@ -58,4 +59,4 @@ export function isAuthenticated(cookies: AstroCookies): boolean {
 }
 
 /** Shown in the header and recorded on approvals. */
-export const TEAM_LABEL = import.meta.env.PUBLIC_TEAM_LABEL || 'Team';
+export const TEAM_LABEL = env('PUBLIC_TEAM_LABEL') || 'Team';

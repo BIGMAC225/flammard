@@ -96,12 +96,12 @@ export const POST: APIRoute = async ({ params, cookies }) => {
   const pdfPath = `minutes/${id}/${hash.slice(0, 8)}.pdf`;
   await minutesPdf().set(pdfPath, new Blob([new Uint8Array(pdfBuffer)]), { metadata: { contentType: 'application/pdf' } });
 
-  await db`
-    update minutes set content_hash = ${hash}, sealed_at = ${approvedAt}, pdf_path = ${pdfPath}, updated_at = now()
-    where id = ${minutes.id}
-  `;
-  await db`insert into approvals (minutes_id, approved_by, hash_at_approval) values (${minutes.id}, ${TEAM_LABEL}, ${hash})`;
-  await db`update meetings set status = 'approved', updated_at = now() where id = ${id}`;
+  await db.transaction([
+    db`update minutes set content_hash = ${hash}, sealed_at = ${approvedAt}, pdf_path = ${pdfPath}, updated_at = now()
+       where id = ${minutes.id}`,
+    db`insert into approvals (minutes_id, approved_by, hash_at_approval) values (${minutes.id}, ${TEAM_LABEL}, ${hash})`,
+    db`update meetings set status = 'approved', updated_at = now() where id = ${id}`,
+  ]);
 
   return json({ hash, approvedAt });
 };
