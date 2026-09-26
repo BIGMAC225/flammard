@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
+import OwnerPicker, { type OwnerValue } from './OwnerPicker';
 import StepsPanel from './StepsPanel';
-import type { Issue, IssueHorizon, IssuePriority, Step } from '../types';
+import type { Issue, IssueHorizon, IssuePriority, PersonOption, Step, TeamId } from '../types';
 
 export type BoardIssue = Issue & { meeting_title: string | null; meeting_date: string | null };
 
@@ -8,7 +9,12 @@ interface Props {
   initialIssues: BoardIssue[];
   stepsByIssue: Record<string, Step[]>;
   initialTab?: IssueHorizon;
+  team?: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people?: PersonOption[];
 }
+
+const UNASSIGNED: OwnerValue = { owner_id: null, owner: null };
 
 const TABS: Array<{ id: IssueHorizon; label: string; hint: string }> = [
   { id: 'short', label: 'Short-term', hint: 'The IDS list: work these top-down in the L10.' },
@@ -36,7 +42,7 @@ async function send(url: string, method: string, body?: unknown) {
   return data;
 }
 
-export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 'short' }: Props) {
+export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 'short', team, people }: Props) {
   const [issues, setIssues] = useState<BoardIssue[]>(initialIssues);
   const [tab, setTab] = useState<IssueHorizon>(initialTab);
   const [error, setError] = useState('');
@@ -50,6 +56,7 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<IssuePriority>('medium');
+  const [owner, setOwner] = useState<OwnerValue>(UNASSIGNED);
   const [saving, setSaving] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
 
@@ -138,11 +145,14 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
         description: description.trim() || null,
         priority,
         horizon: tab,
+        owner_id: owner.owner_id,
+        owner: owner.owner,
       });
       setIssues((all) => [...all, { ...data.issue, meeting_title: null, meeting_date: null }]);
       setTitle('');
       setDescription('');
       setPriority('medium');
+      setOwner(UNASSIGNED);
       titleRef.current?.focus();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add the issue');
@@ -220,6 +230,14 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
             onKeyDown={(e) => {
               if (e.key === 'Enter') add();
             }}
+          />
+          <OwnerPicker
+            value={owner}
+            onChange={setOwner}
+            team={team}
+            initialPeople={people}
+            className="text-sm sm:w-56"
+            aria-label="Owner of the new issue"
           />
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-ink-muted">Priority:</span>
@@ -319,6 +337,14 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
                 <p className="text-sm font-medium text-ink-primary">{issue.title}</p>
                 {issue.description && <p className="text-xs text-ink-muted mt-0.5">{issue.description}</p>}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
+                  <OwnerPicker
+                    size="sm"
+                    value={{ owner_id: issue.owner_id, owner: issue.owner }}
+                    onChange={(v) => patch(issue, { owner_id: v.owner_id, owner: v.owner })}
+                    team={team}
+                    initialPeople={people}
+                    aria-label={`Owner of ${issue.title}`}
+                  />
                   {issue.meeting_id && issue.meeting_title ? (
                     <a href={`/dashboard/meetings/${issue.meeting_id}?tab=eos`} className="text-accent hover:text-accent-dim">
                       {issue.meeting_title} · {issue.meeting_date}

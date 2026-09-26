@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Period, RockStatus } from '../types';
+import OwnerPicker, { type OwnerValue } from './OwnerPicker';
+import type { Period, PersonOption, RockStatus, TeamId } from '../types';
 
 // Small forms on the roadmap: add a period, add a rock, and the inline
 // status/period/owner controls on each rock card. Everything reloads the
@@ -57,10 +58,21 @@ export function AddPeriod() {
   );
 }
 
-export function AddRock({ periods, defaultPeriodId }: { periods: Period[]; defaultPeriodId?: string | null }) {
+export function AddRock({
+  periods,
+  defaultPeriodId,
+  team,
+  people,
+}: {
+  periods: Period[];
+  defaultPeriodId?: string | null;
+  team?: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people?: PersonOption[];
+}) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
-  const [owner, setOwner] = useState('');
+  const [owner, setOwner] = useState<OwnerValue>({ owner_id: null, owner: null });
   const [periodId, setPeriodId] = useState(defaultPeriodId ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -69,7 +81,7 @@ export function AddRock({ periods, defaultPeriodId }: { periods: Period[]; defau
     setSaving(true);
     setError('');
     try {
-      await call('/api/rocks', 'POST', { title, owner, period_id: periodId || null });
+      await call('/api/rocks', 'POST', { title, owner_id: owner.owner_id, owner: owner.owner, period_id: periodId || null });
       window.location.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
@@ -89,7 +101,7 @@ export function AddRock({ periods, defaultPeriodId }: { periods: Period[]; defau
     <div className="border border-line rounded-xl p-4 bg-bg-elevated space-y-3">
       <input autoFocus className="input text-sm" placeholder="Rock title" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void save(); if (e.key === 'Escape') setOpen(false); }} />
       <div className="grid sm:grid-cols-2 gap-3">
-        <input className="input text-sm" placeholder="Owner (optional)" value={owner} onChange={(e) => setOwner(e.target.value)} />
+        <OwnerPicker value={owner} onChange={setOwner} team={team} initialPeople={people} className="text-sm" />
         <select className="input text-sm" value={periodId} onChange={(e) => setPeriodId(e.target.value)}>
           <option value="">No period yet</option>
           {periods.map((p) => (
@@ -106,7 +118,26 @@ export function AddRock({ periods, defaultPeriodId }: { periods: Period[]; defau
   );
 }
 
-export function RockControls({ rockId, status, periodId, periods }: { rockId: string; status: RockStatus; periodId: string | null; periods: Period[] }) {
+export function RockControls({
+  rockId,
+  status,
+  periodId,
+  periods,
+  owner = null,
+  ownerId = null,
+  team,
+  people,
+}: {
+  rockId: string;
+  status: RockStatus;
+  periodId: string | null;
+  periods: Period[];
+  owner?: string | null;
+  ownerId?: string | null;
+  team?: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people?: PersonOption[];
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -161,6 +192,15 @@ export function RockControls({ rockId, status, periodId, periods }: { rockId: st
           <option key={p.id} value={p.id}>{p.name}</option>
         ))}
       </select>
+      <OwnerPicker
+        size="sm"
+        value={{ owner_id: ownerId, owner }}
+        onChange={(v) => update({ owner_id: v.owner_id, owner: v.owner })}
+        team={team}
+        initialPeople={people}
+        disabled={busy}
+        aria-label="Rock owner"
+      />
       <button onClick={remove} disabled={busy} className="text-xs text-ink-muted hover:text-state-danger ml-auto" aria-label="Delete rock">Delete</button>
       {error && <p className="w-full text-xs text-state-danger">{error}</p>}
     </div>

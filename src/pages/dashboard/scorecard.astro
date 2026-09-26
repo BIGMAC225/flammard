@@ -2,12 +2,13 @@
 import Dashboard from '../../layouts/Dashboard.astro';
 import ScorecardManager from '../../components/ScorecardManager';
 import { many, sql } from '../../lib/db';
+import { listPeopleOptions } from '../../lib/people';
 import { currentTeam, teamLabel } from '../../lib/teams';
 import type { ScorecardEntry, ScorecardMetric, TaxDomeImport } from '../../types';
 
 const team = currentTeam(Astro.cookies);
 const db = sql();
-const [typedMetrics, typedEntries, typedImports] = await Promise.all([
+const [typedMetrics, typedEntries, typedImports, people] = await Promise.all([
   many<ScorecardMetric>(db`select * from scorecard_metrics where active and team = ${team} order by sort_order, created_at`),
   many<ScorecardEntry>(db`
     select e.*, e.period_date::text as period_date
@@ -18,6 +19,7 @@ const [typedMetrics, typedEntries, typedImports] = await Promise.all([
     select *, period_start::text as period_start, period_end::text as period_end
     from taxdome_imports where team = ${team} order by received_at desc limit 10
   `),
+  listPeopleOptions(true),
 ]);
 
 // Most recent 8 reporting periods that have any data
@@ -28,7 +30,7 @@ const webhookUrl = `${import.meta.env.PUBLIC_APP_URL || Astro.url.origin}/api/in
 
 <Dashboard eyebrow={teamLabel(team)} title="Scorecard" description="Weekly measurables. Values marked TD were imported from TaxDome.">
 
-  <ScorecardManager metrics={typedMetrics} entries={typedEntries} periods={periods} client:load />
+  <ScorecardManager metrics={typedMetrics} entries={typedEntries} periods={periods} team={team} people={people} client:load />
 
   <!-- ── TaxDome imports ─────────────────────────────── -->
   <section class="mt-12">

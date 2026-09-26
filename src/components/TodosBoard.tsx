@@ -1,12 +1,18 @@
 import { useRef, useState } from 'react';
+import OwnerPicker, { type OwnerValue } from './OwnerPicker';
 import StepsPanel from './StepsPanel';
-import type { Step, Todo, TodoStatus } from '../types';
+import type { PersonOption, Step, TeamId, Todo, TodoStatus } from '../types';
 
 export type BoardTodo = Todo & { meeting_title: string | null; meeting_date: string | null };
 
 interface Props {
   initialTodos: BoardTodo[];
   stepsByTodo: Record<string, Step[]>;
+  team: TeamId;
+  /** Server-rendered picker list (including inactive people). */
+  people: PersonOption[];
+  /** Owner a new to-do starts with: the signed-in person, or unassigned. */
+  defaultOwner: OwnerValue;
 }
 
 async function send(url: string, method: string, body?: unknown) {
@@ -21,10 +27,10 @@ async function send(url: string, method: string, body?: unknown) {
 }
 
 /** Open to-dos: add new ones, close them out, break them into steps. */
-export default function TodosBoard({ initialTodos, stepsByTodo }: Props) {
+export default function TodosBoard({ initialTodos, stepsByTodo, team, people, defaultOwner }: Props) {
   const [todos, setTodos] = useState<BoardTodo[]>(initialTodos);
   const [title, setTitle] = useState('');
-  const [owner, setOwner] = useState('');
+  const [owner, setOwner] = useState<OwnerValue>(defaultOwner);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [closedCount, setClosedCount] = useState(0);
@@ -35,7 +41,7 @@ export default function TodosBoard({ initialTodos, stepsByTodo }: Props) {
     setSaving(true);
     setError('');
     try {
-      const data = await send('/api/todos', 'POST', { title: title.trim(), owner: owner.trim() || null });
+      const data = await send('/api/todos', 'POST', { title: title.trim(), owner_id: owner.owner_id, owner: owner.owner });
       setTodos((all) => [{ ...data.todo, meeting_title: null, meeting_date: null }, ...all]);
       setTitle('');
       titleRef.current?.focus();
@@ -56,6 +62,19 @@ export default function TodosBoard({ initialTodos, stepsByTodo }: Props) {
     } catch (err) {
       setTodos(prev);
       setError(err instanceof Error ? err.message : 'Could not update the to-do');
+    }
+  };
+
+  const reassign = async (todo: BoardTodo, next: OwnerValue) => {
+    const prev = todos;
+    setTodos((all) => all.map((t) => (t.id === todo.id ? { ...t, ...next } : t)));
+    setError('');
+    try {
+      const data = await send(`/api/todos/${todo.id}`, 'PATCH', { owner_id: next.owner_id, owner: next.owner });
+      if (data.todo) setTodos((all) => all.map((t) => (t.id === todo.id ? { ...t, owner: data.todo.owner, owner_id: data.todo.owner_id } : t)));
+    } catch (err) {
+      setTodos(prev);
+      setError(err instanceof Error ? err.message : 'Could not change the owner');
     }
   };
 
@@ -85,14 +104,13 @@ export default function TodosBoard({ initialTodos, stepsByTodo }: Props) {
               if (e.key === 'Enter') add();
             }}
           />
-          <input
-            className="input text-sm sm:w-44"
-            placeholder="Owner (optional)"
+          <OwnerPicker
             value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') add();
-            }}
+            onChange={setOwner}
+            team={team}
+            initialPeople={people}
+            className="text-sm sm:w-44"
+            aria-label="Owner of the new to-do"
           />
           <button onClick={add} disabled={saving || !title.trim()} className="btn-primary text-sm">
             {saving ? 'Adding…' : 'Add'}
@@ -131,7 +149,14 @@ export default function TodosBoard({ initialTodos, stepsByTodo }: Props) {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-ink-primary">{todo.title}</p>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5 text-xs">
-                  {todo.owner && <span className="text-ink-muted">{todo.owner}</span>}
+                  <OwnerPicker
+                    size="sm"
+                    value={{ owner_id: todo.owner_id, owner: todo.owner }}
+                    onChange={(v) => reassign(todo, v)}
+                    team={team}
+                    initialPeople={people}
+                    aria-label={`Owner of ${todo.title}`}
+                  />
                   {todo.meeting_id && todo.meeting_title ? (
                     <a href={`/dashboard/meetings/${todo.meeting_id}?tab=eos`} className="text-accent hover:text-accent-dim">
                       {todo.meeting_title} · {todo.meeting_date}

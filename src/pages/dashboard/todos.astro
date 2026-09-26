@@ -1,7 +1,9 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
 import TodosBoard, { type BoardTodo } from '../../components/TodosBoard';
+import { principal } from '../../lib/api';
 import { many, sql } from '../../lib/db';
+import { listPeopleOptions } from '../../lib/people';
 import { stepsForMany } from '../../lib/steps';
 import { currentTeam, teamLabel } from '../../lib/teams';
 
@@ -18,7 +20,10 @@ const open = todos.filter((t) => t.status === 'open');
 const done = todos.filter((t) => t.status === 'done');
 const notDone = todos.filter((t) => t.status === 'not_done');
 const dropped = todos.filter((t) => t.status === 'dropped');
-const stepsByTodo = await stepsForMany('todo', open.map((t) => t.id));
+const [stepsByTodo, people] = await Promise.all([stepsForMany('todo', open.map((t) => t.id)), listPeopleOptions(true)]);
+// A new to-do starts owned by the signed-in person (unassigned for the shared login)
+const me = principal(Astro.locals);
+const defaultOwner = me.kind === 'person' ? { owner_id: me.id, owner: me.name } : { owner_id: null, owner: null };
 ---
 
 <Dashboard eyebrow={teamLabel(team)} title="To-Dos" description="7-day action items: from L10 meetings or added here.">
@@ -43,7 +48,7 @@ const stepsByTodo = await stepsForMany('todo', open.map((t) => t.id));
     ))}
   </div>
 
-  <TodosBoard initialTodos={open} stepsByTodo={stepsByTodo} client:load />
+  <TodosBoard initialTodos={open} stepsByTodo={stepsByTodo} team={team} people={people} defaultOwner={defaultOwner} client:load />
 
   <div class="space-y-6 mt-8">
     {notDone.length > 0 && (
