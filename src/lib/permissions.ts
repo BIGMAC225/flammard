@@ -159,7 +159,8 @@ export function checkRoute(
   if (!rule) return { ok: false, status: 403 };
   let ok: boolean;
   if (rule.need === 'bootstrap') {
-    ok = p.kind === 'shared' && ctx.bootstrapOpen === true;
+    // The handler answers 409 once bootstrap has closed, so only the principal kind is checked here
+    ok = p.kind === 'shared';
   } else {
     ok = can(p, rule.need);
     // The owner-bootstrap form lives on the People page for the shared login
