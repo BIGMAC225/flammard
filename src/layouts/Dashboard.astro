@@ -1,6 +1,8 @@
 ---
 import Base from './Base.astro';
 import { TEAMS, currentTeam } from '../lib/teams';
+import { allowedTeams, can } from '../lib/permissions';
+import { bootstrapOpen } from '../lib/people';
 
 interface Props {
   title?: string;
@@ -26,6 +28,28 @@ const NAV = [
 const path = Astro.url.pathname;
 const team = currentTeam(Astro.cookies);
 const switchNext = encodeURIComponent(path + Astro.url.search);
+const principal = Astro.locals.principal;
+const teamIds = principal ? allowedTeams(principal) : TEAMS.map((t) => t.id);
+const visibleTeams = TEAMS.filter((t) => teamIds.includes(t.id));
+
+// Bootstrap: the shared login is offered to claim the first owner account
+let showBootstrap = false;
+if (principal?.kind === 'shared') {
+  try {
+    showBootstrap = await bootstrapOpen();
+  } catch {
+    showBootstrap = false; // people table not there yet
+  }
+}
+
+const MENU = [
+  { href: '/dashboard/account', label: 'My account', show: can(principal, 'account.self') },
+  { href: '/dashboard/people', label: 'People', show: can(principal, 'people.manage') || showBootstrap },
+  { href: '/dashboard/settings', label: 'Settings', show: can(principal, 'settings.manage') },
+  { href: '/dashboard/import', label: 'Import Ninety', show: can(principal, 'import.manage') },
+].filter((m) => m.show);
+const userName = principal?.name ?? 'Account';
+
 const isActive = (item: (typeof NAV)[number]) =>
   item.exact ? path === item.href : path.startsWith(item.href);
 
@@ -71,7 +95,11 @@ const hasActions = Astro.slots.has('actions');
         <div class="flex items-center gap-2">
           <!-- Team switcher: scopes every list on the site -->
           <div class="flex gap-0.5 p-0.5 bg-bg-elevated rounded-full" role="group" aria-label="Team">
-            {TEAMS.map((t) => (
+            {visibleTeams.length === 1 ? (
+              <span class="px-3 py-1 rounded-full text-xs font-semibold bg-bg-surface text-accent shadow-soft">
+                {visibleTeams[0].short}
+              </span>
+            ) : visibleTeams.map((t) => (
               <a
                 href={`/api/team?set=${t.id}&next=${switchNext}`}
                 class={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
@@ -83,9 +111,26 @@ const hasActions = Astro.slots.has('actions');
               </a>
             ))}
           </div>
-          <form method="POST" action="/api/auth/logout">
-            <button type="submit" class="btn-ghost text-xs">Sign out</button>
-          </form>
+          <!-- User menu -->
+          <details class="relative group" data-user-menu>
+            <summary class="list-none cursor-pointer select-none flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-ink-secondary hover:text-ink-primary hover:bg-bg-elevated [&::-webkit-details-marker]:hidden">
+              <span class="max-w-[9rem] truncate">{userName}</span>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true" class="transition-transform group-open:rotate-180">
+                <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </summary>
+            <div class="absolute right-0 mt-2 w-48 rounded-xl border border-line bg-bg-surface shadow-card py-1 z-50">
+              {principal?.kind === 'person' && (
+                <p class="px-3 py-2 text-[11px] text-ink-muted truncate border-b border-line/70">{principal.email || principal.name}</p>
+              )}
+              {MENU.map((m) => (
+                <a href={m.href} class="block px-3 py-2 text-sm text-ink-primary hover:bg-bg-elevated">{m.label}</a>
+              ))}
+              <form method="POST" action="/api/auth/logout">
+                <button type="submit" class="w-full text-left px-3 py-2 text-sm text-ink-secondary hover:text-ink-primary hover:bg-bg-elevated">Sign out</button>
+              </form>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -103,6 +148,14 @@ const hasActions = Astro.slots.has('actions');
         ))}
       </nav>
     </header>
+
+    {showBootstrap && (
+      <div class="bg-mint-50 border-b border-mint-200">
+        <div class="max-w-6xl mx-auto px-4 py-2 text-sm text-ink-primary">
+          <a href="/dashboard/people" class="font-semibold hover:underline">Set up your owner account →</a>
+        </div>
+      </div>
+    )}
 
     <!-- Page content -->
     <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-8 md:py-10 animate-fade-up">
@@ -124,3 +177,16 @@ const hasActions = Astro.slots.has('actions');
     </main>
   </div>
 </Base>
+
+<script>
+  // Close the user menu on an outside click or Escape
+  const menu = document.querySelector<HTMLDetailsElement>('[data-user-menu]');
+  if (menu) {
+    document.addEventListener('click', (e) => {
+      if (menu.open && !menu.contains(e.target as Node)) menu.open = false;
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && menu.open) menu.open = false;
+    });
+  }
+</script>
