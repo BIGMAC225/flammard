@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { json, readBody, requireAuth, requireUuid } from '../../../lib/api';
-import { buildUpdate, sql } from '../../../lib/db';
+import { sql } from '../../../lib/db';
 
 export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies) ?? requireUuid(params.id);
@@ -11,17 +11,28 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   if ('title' in body && (typeof body.title !== 'string' || !body.title.trim())) return json({ error: 'Title required' }, 400);
   if (typeof body.title === 'string') body.title = body.title.trim().slice(0, 500);
 
-  const update = buildUpdate('steps', params.id!, body, ['done', 'title'], { updated_at: new Date() });
-  if (!update) return json({ error: 'Nothing to update' }, 400);
-  const [step] = await sql().query(update.text, update.params);
-  if (!step) return json({ error: 'Not found' }, 404);
+  const id = params.id!;
+  const db = sql();
 
-  // Ticking a step ticks its sub-steps; un-ticking a sub-step un-ticks the step
-  if (typeof body.done === 'boolean') {
-    if (body.done) await sql()`update steps set done = true, updated_at = now() where parent_step_id = ${params.id!}`;
-    else if (step.parent_step_id) await sql()`update steps set done = false, updated_at = now() where id = ${step.parent_step_id}`;
+  if (typeof body.title === 'string') {
+    const [step] = await db`update steps set title = ${body.title}, updated_at = now() where id = ${id} returning *`;
+    if (!step) return json({ error: 'Not found' }, 404);
+    if (typeof body.done !== 'boolean') return json({ step });
   }
-  return json({ step });
+
+  // Ticking a step ticks its sub-steps; un-ticking a sub-step un-ticks its
+  // step. One statement each, so the cascade can't half-apply.
+  if (typeof body.done === 'boolean') {
+    const rows = body.done
+      ? await db`update steps set done = true, updated_at = now() where id = ${id} or parent_step_id = ${id} returning *`
+      : await db`update steps set done = false, updated_at = now()
+                 where id = ${id} or id = (select parent_step_id from steps where id = ${id}) returning *`;
+    const step = rows.find((r) => r.id === id);
+    if (!step) return json({ error: 'Not found' }, 404);
+    return json({ step });
+  }
+
+  return json({ error: 'Nothing to update' }, 400);
 };
 
 export const DELETE: APIRoute = async ({ params, cookies }) => {

@@ -23,7 +23,7 @@ const DETAIL_LABELS: Record<1 | 2 | 3, string> = {
  */
 export default function StepsPanel({ type, parentId, parentTitle, initialSteps, open = false }: Props) {
   const [steps, setSteps] = useState<Step[]>(initialSteps);
-  const [expanded, setExpanded] = useState(open || initialSteps.length > 0 ? open : false);
+  const [expanded, setExpanded] = useState(open);
   const [adding, setAdding] = useState<string | null>(null); // parent_step_id or '' for top level
   const [newTitle, setNewTitle] = useState('');
   const [busy, setBusy] = useState(false);
@@ -53,29 +53,34 @@ export default function StepsPanel({ type, parentId, parentTitle, initialSteps, 
 
   const toggle = async (step: Step) => {
     const done = !step.done;
+    // Remember every row we change so a failed save can put all of them back
+    const before = new Map<string, Step>();
     setSteps((all) =>
       all.map((s) => {
-        if (s.id === step.id) return { ...s, done };
-        if (done && s.parent_step_id === step.id) return { ...s, done: true };
-        if (!done && step.parent_step_id && s.id === step.parent_step_id) return { ...s, done: false };
+        const cascadesDown = done && s.parent_step_id === step.id;
+        const cascadesUp = !done && !!step.parent_step_id && s.id === step.parent_step_id;
+        if (s.id === step.id || cascadesDown || cascadesUp) {
+          before.set(s.id, s);
+          return { ...s, done: s.id === step.id ? done : cascadesDown };
+        }
         return s;
       })
     );
     try {
       await post(`/api/steps/${step.id}`, 'PATCH', { done });
     } catch (err) {
-      setSteps((all) => all.map((s) => (s.id === step.id ? step : s)));
+      setSteps((all) => all.map((s) => before.get(s.id) ?? s));
       setError(err instanceof Error ? err.message : 'Could not save');
     }
   };
 
   const remove = async (step: Step) => {
-    const prev = steps;
+    const removed = steps.filter((s) => s.id === step.id || s.parent_step_id === step.id);
     setSteps((all) => all.filter((s) => s.id !== step.id && s.parent_step_id !== step.id));
     try {
       await post(`/api/steps/${step.id}`, 'DELETE');
     } catch (err) {
-      setSteps(prev);
+      setSteps((all) => [...all, ...removed].sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at)));
       setError(err instanceof Error ? err.message : 'Could not delete');
     }
   };
@@ -147,11 +152,12 @@ export default function StepsPanel({ type, parentId, parentTitle, initialSteps, 
     }
   };
 
-  const pickedCount = picked.reduce((n, row) => n + row.filter(Boolean).length, 0);
+  // Sub-steps only count when their step is ticked (they're disabled otherwise)
+  const pickedCount = picked.reduce((n, row) => n + (row[0] ? row.filter(Boolean).length : 0), 0);
 
   const stepRow = (s: Step, depth: number) => (
     <div key={s.id} className={`flex items-start gap-2 py-1 ${depth ? 'ml-6' : ''}`}>
-      <input type="checkbox" checked={s.done} onChange={() => toggle(s)} className="mt-1 accent-current" />
+      <input type="checkbox" checked={s.done} onChange={() => toggle(s)} className="mt-1 accent-current" aria-label={s.title} />
       <span className={`flex-1 text-sm ${s.done ? 'line-through text-ink-muted' : 'text-ink-primary'}`}>{s.title}</span>
       {!depth && (
         <button onClick={() => { setAdding(s.id); setNewTitle(''); }} className="text-xs text-ink-muted hover:text-ink-primary" title="Add a sub-step">
