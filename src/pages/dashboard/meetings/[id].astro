@@ -62,10 +62,10 @@ const defaultTab = meeting.analysis_status === 'committed' ? 'eos' : 'session';
 const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultTab;
 ---
 
-<Dashboard title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
+<Dashboard eyebrow="L10 meeting" title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
 
   <!-- Meeting meta -->
-  <div class="flex flex-wrap items-center gap-3 mb-2 -mt-2">
+  <div class="flex flex-wrap items-center gap-3 mb-2 -mt-4">
     <span class={STATUS_CLASS[meeting.status] ?? 'badge-draft'}>
       {STATUS_LABEL[meeting.status] ?? meeting.status}
     </span>
@@ -86,7 +86,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
   )}
 
   <!-- Tab bar -->
-  <div class="flex gap-1 p-1 bg-bg-elevated rounded-xl w-fit mb-6">
+  <div class="flex gap-1 p-1 bg-bg-elevated rounded-full w-fit mb-6">
     {[
       { id: 'session', label: 'Session' },
       { id: 'eos', label: 'EOS Sections' },
@@ -94,9 +94,9 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
     ].map(tab => (
       <a
         href={`?tab=${tab.id}`}
-        class={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+        class={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
           activeTab === tab.id
-            ? 'bg-bg-surface text-ink-primary shadow-sm'
+            ? 'bg-bg-surface text-accent shadow-soft'
             : 'text-ink-secondary hover:text-ink-primary'
         }`}
       >
@@ -124,7 +124,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
     <div class="space-y-6">
 
       <section class="card">
-        <h2 class="text-base font-semibold text-ink-primary mb-1">Headlines</h2>
+        <h2 class="section-title mb-1">Headlines</h2>
         <p class="text-sm text-ink-secondary mb-4">Customer wins, employee wins, and good news.</p>
         <HeadlinesPanel meetingId={id} initialHeadlines={headlines ?? []} client:load />
       </section>
@@ -132,7 +132,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
       <section class="card">
         <div class="flex items-start justify-between mb-4">
           <div>
-            <h2 class="text-base font-semibold text-ink-primary">Rocks</h2>
+            <h2 class="section-title">Rocks</h2>
             <p class="text-sm text-ink-secondary mt-0.5">Quarterly goals reviewed at this meeting.</p>
           </div>
           <a href="/dashboard/rocks" class="text-xs text-accent hover:text-accent-dim transition-colors">All rocks →</a>
@@ -143,7 +143,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
       <section class="card">
         <div class="flex items-start justify-between mb-4">
           <div>
-            <h2 class="text-base font-semibold text-ink-primary">To-Dos</h2>
+            <h2 class="section-title">To-Dos</h2>
             <p class="text-sm text-ink-secondary mt-0.5">7-day action items for this meeting.</p>
           </div>
           <a href="/dashboard/todos" class="text-xs text-accent hover:text-accent-dim transition-colors">All to-dos →</a>
@@ -154,7 +154,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
       <section class="card">
         <div class="flex items-start justify-between mb-4">
           <div>
-            <h2 class="text-base font-semibold text-ink-primary">Issues (IDS)</h2>
+            <h2 class="section-title">Issues (IDS)</h2>
             <p class="text-sm text-ink-secondary mt-0.5">Issues identified, discussed, and solved.</p>
           </div>
           <a href="/dashboard/issues" class="text-xs text-accent hover:text-accent-dim transition-colors">All issues →</a>
@@ -164,7 +164,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
 
       {meeting.conclude_notes && (
         <section class="card">
-          <h2 class="text-base font-semibold text-ink-primary mb-3">Conclude Notes</h2>
+          <h2 class="section-title mb-3">Conclude Notes</h2>
           <p class="text-sm text-ink-secondary leading-relaxed">{meeting.conclude_notes}</p>
         </section>
       )}
@@ -178,7 +178,7 @@ const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultT
       <section class="card">
         <div class="flex items-center justify-between mb-4">
           <div>
-            <h2 class="text-base font-semibold text-ink-primary">
+            <h2 class="section-title">
               {typedMinutes?.sealed_at ? 'Sealed minutes' : 'Meeting minutes'}
             </h2>
             {typedMinutes?.sealed_at && (

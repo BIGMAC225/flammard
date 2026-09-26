@@ -11,8 +11,13 @@ export function transcriptToText(fileName: string, raw: string): string {
       // Vibe / whisper JSON: { segments: [{ text, start, stop }] }
       const segments: unknown[] = Array.isArray(data) ? data : data?.segments ?? data?.transcription ?? [];
       const lines = segments
-        .map((s) => (typeof s === 'string' ? s : (s as { text?: string })?.text ?? ''))
-        .map((t) => t.trim())
+        .map((s) => {
+          if (typeof s === 'string') return s.trim();
+          const seg = s as { text?: string; speaker?: number };
+          const text = (seg?.text ?? '').trim();
+          if (!text) return '';
+          return seg.speaker != null ? `Speaker ${seg.speaker + 1}: ${text}` : text;
+        })
         .filter(Boolean);
       if (lines.length) return lines.join('\n');
     } catch {

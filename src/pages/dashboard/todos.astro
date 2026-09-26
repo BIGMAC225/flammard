@@ -32,19 +32,13 @@ const STATUS_LABELS: Record<string, string> = {
 };
 ---
 
-<Dashboard title="To-Dos">
-  <div class="flex items-center justify-between mb-8">
-    <div>
-      <h1 class="text-2xl font-semibold text-ink-primary">To-Dos</h1>
-      <p class="text-sm text-ink-secondary mt-1">7-day action items across all L10 meetings.</p>
+<Dashboard eyebrow="EOS" title="To-Dos" description="7-day action items across all L10 meetings.">
+  {open.length > 0 && (
+    <div slot="actions" class="text-right">
+      <div class="font-display text-3xl font-semibold tracking-tight text-amber-900 tabular-nums">{open.length}</div>
+      <div class="eyebrow">open</div>
     </div>
-    {open.length > 0 && (
-      <div class="text-right">
-        <div class="text-3xl font-semibold text-state-warning">{open.length}</div>
-        <div class="text-xs text-ink-muted">open</div>
-      </div>
-    )}
-  </div>
+  )}
 
   <!-- Stats -->
   {todos && todos.length > 0 && (
@@ -55,9 +49,9 @@ const STATUS_LABELS: Record<string, string> = {
         { label: 'Not Done', val: notDone.length, cls: 'text-state-danger' },
         { label: 'Dropped', val: dropped.length, cls: 'text-ink-muted' },
       ].map(({ label, val, cls }) => (
-        <div class="card py-4">
-          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
-          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">{label}</p>
+          <p class={`stat-tile-value ${cls}`}>{val}</p>
         </div>
       ))}
     </div>

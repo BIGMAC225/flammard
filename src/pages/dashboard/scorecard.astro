@@ -27,12 +27,7 @@ const periods = [...new Set(typedEntries.map((e) => e.period_date!))].slice(0, 8
 const webhookUrl = `${import.meta.env.PUBLIC_APP_URL || Astro.url.origin}/api/integrations/taxdome`;
 ---
 
-<Dashboard title="Scorecard">
-  <div class="flex items-start justify-between gap-4 mb-8 -mt-2">
-    <p class="text-sm text-ink-secondary">
-      Weekly measurables. Values marked <span class="font-mono text-xs text-ink-muted">TD</span> were imported from TaxDome.
-    </p>
-  </div>
+<Dashboard eyebrow="EOS" title="Scorecard" description="Weekly measurables. Values marked TD were imported from TaxDome.">
 
   <ScorecardManager metrics={typedMetrics} entries={typedEntries} periods={periods} client:load />
 
@@ -40,7 +35,7 @@ const webhookUrl = `${import.meta.env.PUBLIC_APP_URL || Astro.url.origin}/api/in
   <section class="mt-12">
     <div class="flex items-start justify-between gap-4 mb-4">
       <div>
-        <h2 class="text-base font-semibold text-ink-primary">TaxDome imports</h2>
+        <h2 class="section-title">TaxDome imports</h2>
         <p class="text-sm text-ink-secondary mt-0.5">
           Reports received through the Zapier webhook. Setup steps are in <span class="font-mono text-xs">docs/AUTOMATION.md</span>.
         </p>
@@ -58,7 +53,7 @@ const webhookUrl = `${import.meta.env.PUBLIC_APP_URL || Astro.url.origin}/api/in
     {typedImports.length === 0 ? (
       <p class="text-sm text-ink-muted">No reports received yet.</p>
     ) : (
-      <div class="border border-line rounded-xl overflow-hidden">
+      <div class="card p-0 overflow-hidden">
         {typedImports.map((imp, i) => (
           <div class={`px-5 py-4 ${i < typedImports.length - 1 ? 'border-b border-line' : ''}`}>
             <div class="flex items-center gap-3">

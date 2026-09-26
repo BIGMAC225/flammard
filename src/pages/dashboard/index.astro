@@ -58,51 +58,44 @@ const STATUS_CLASS: Record<string, string> = {
 };
 ---
 
-<Dashboard title="">
-  <!-- Header row -->
-  <div class="flex items-center justify-between mb-8">
-    <div>
-      <h1 class="text-2xl font-semibold text-ink-primary">Dashboard</h1>
-      <p class="text-sm text-ink-secondary mt-1">Welcome back, {user?.user_metadata?.full_name ?? user?.email}</p>
-    </div>
-    <a href="/dashboard/meetings/new" class="btn-primary">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-      New meeting
-    </a>
-  </div>
+<Dashboard eyebrow="EOS" title="Dashboard" description={`Welcome back, ${user?.user_metadata?.full_name ?? user?.email}`}>
+  <a slot="actions" href="/dashboard/meetings/new" class="btn-primary">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    New meeting
+  </a>
 
   <!-- EOS KPIs -->
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-    <div class="card py-5">
-      <div class="text-3xl font-semibold text-ink-primary">{statusCounts.total}</div>
-      <div class="text-xs text-ink-secondary mt-1">Total meetings</div>
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-10">
+    <div class="stat-tile">
+      <p class="stat-tile-label">Meetings</p>
+      <p class="stat-tile-value">{statusCounts.total}</p>
+      <p class="stat-tile-hint">{statusCounts.approved} approved · {statusCounts.draft} in progress</p>
     </div>
-    <a href="/dashboard/rocks" class="card py-5 hover:border-line-strong transition-colors block">
-      <div class={`text-3xl font-semibold ${rocksPct !== null ? (rocksPct >= 70 ? 'text-state-success' : 'text-state-warning') : 'text-ink-primary'}`}>
+    <a href="/dashboard/rocks" class={`stat-tile block transition-shadow hover:shadow-lift ${rocksPct !== null && rocksPct < 70 ? 'bg-amber-50 border-amber-200' : ''}`}>
+      <p class="stat-tile-label">Rocks on track</p>
+      <p class={`stat-tile-value ${rocksPct !== null ? (rocksPct >= 70 ? 'text-state-success' : 'text-amber-900') : ''}`}>
         {rocksPct !== null ? `${rocksPct}%` : rocksTotal === 0 ? '—' : '0%'}
-      </div>
-      <div class="text-xs text-ink-secondary mt-1">Rocks on track</div>
+      </p>
+      <p class="stat-tile-hint">{rocksOnTrack} of {rocksTotal} active</p>
     </a>
-    <a href="/dashboard/todos" class="card py-5 hover:border-line-strong transition-colors block">
-      <div class={`text-3xl font-semibold ${(openTodos?.length ?? 0) > 0 ? 'text-state-warning' : 'text-ink-primary'}`}>
-        {openTodos?.length ?? 0}
-      </div>
-      <div class="text-xs text-ink-secondary mt-1">Open to-dos</div>
+    <a href="/dashboard/todos" class="stat-tile block transition-shadow hover:shadow-lift">
+      <p class="stat-tile-label">Open to-dos</p>
+      <p class={`stat-tile-value ${(openTodos?.length ?? 0) > 0 ? 'text-amber-900' : ''}`}>{openTodos?.length ?? 0}</p>
+      <p class="stat-tile-hint">7-day action items</p>
     </a>
-    <a href="/dashboard/issues" class="card py-5 hover:border-line-strong transition-colors block">
-      <div class={`text-3xl font-semibold ${(openIssues?.length ?? 0) > 0 ? 'text-state-danger' : 'text-ink-primary'}`}>
-        {openIssues?.length ?? 0}
-      </div>
-      <div class="text-xs text-ink-secondary mt-1">Open issues</div>
+    <a href="/dashboard/issues" class={`stat-tile block transition-shadow hover:shadow-lift ${(openIssues?.length ?? 0) > 0 ? 'bg-red-50 border-red-200' : ''}`}>
+      <p class="stat-tile-label">Open issues</p>
+      <p class={`stat-tile-value ${(openIssues?.length ?? 0) > 0 ? 'text-red-800' : ''}`}>{openIssues?.length ?? 0}</p>
+      <p class="stat-tile-hint">Waiting for IDS</p>
     </a>
   </div>
 
   <!-- Recent meetings -->
   <div>
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-base font-semibold text-ink-primary">Recent meetings</h2>
+      <h2 class="section-title">Recent meetings</h2>
       <a href="/dashboard/meetings" class="text-sm text-accent hover:text-accent-dim transition-colors">View all →</a>
     </div>
 
@@ -113,7 +106,7 @@ const STATUS_CLASS: Record<string, string> = {
         <a href="/dashboard/meetings/new" class="btn-primary">Create meeting</a>
       </div>
     ) : (
-      <div class="border border-line rounded-xl overflow-hidden">
+      <div class="card p-0 overflow-hidden">
         {meetings.map(m => (
           <a
             href={`/dashboard/meetings/${m.id}`}

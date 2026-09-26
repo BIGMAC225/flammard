@@ -219,19 +219,19 @@ export default function MeetingSession(props: Props) {
     <div className="flex items-center gap-2.5">
       <span
         className={`w-6 h-6 rounded-full text-xs font-semibold flex items-center justify-center flex-shrink-0 ${
-          done ? 'bg-state-success/15 text-state-success' : 'bg-bg-elevated text-ink-muted border border-line'
+          done ? 'bg-mint-100 text-mint-800' : 'bg-bg-elevated text-ink-muted border border-line'
         }`}
       >
         {done ? '✓' : n}
       </span>
-      <h2 className="text-base font-semibold text-ink-primary">{label}</h2>
+      <h2 className="section-title">{label}</h2>
     </div>
   );
 
   return (
     <div className="space-y-6">
       {error && (
-        <div className="p-3 bg-state-danger/10 border border-state-danger/20 rounded-lg text-sm text-state-danger">
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-800">
           {error}
         </div>
       )}

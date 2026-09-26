@@ -31,19 +31,13 @@ const STATUS_COLORS: Record<string, string> = {
 };
 ---
 
-<Dashboard title="Issues">
-  <div class="flex items-center justify-between mb-8">
-    <div>
-      <h1 class="text-2xl font-semibold text-ink-primary">Issues</h1>
-      <p class="text-sm text-ink-secondary mt-1">IDS items across all L10 meetings.</p>
+<Dashboard eyebrow="EOS" title="Issues" description="IDS items across all L10 meetings.">
+  {open.length > 0 && (
+    <div slot="actions" class="text-right">
+      <div class="font-display text-3xl font-semibold tracking-tight text-red-800 tabular-nums">{open.length}</div>
+      <div class="eyebrow">open</div>
     </div>
-    {open.length > 0 && (
-      <div class="text-right">
-        <div class="text-3xl font-semibold text-state-danger">{open.length}</div>
-        <div class="text-xs text-ink-muted">open</div>
-      </div>
-    )}
-  </div>
+  )}
 
   <!-- Stats -->
   {issues && issues.length > 0 && (
@@ -53,9 +47,9 @@ const STATUS_COLORS: Record<string, string> = {
         { label: 'Solved', val: solved.length, cls: 'text-state-success' },
         { label: 'Dropped', val: dropped.length, cls: 'text-ink-muted' },
       ].map(({ label, val, cls }) => (
-        <div class="card py-4">
-          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
-          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">{label}</p>
+          <p class={`stat-tile-value ${cls}`}>{val}</p>
         </div>
       ))}
     </div>

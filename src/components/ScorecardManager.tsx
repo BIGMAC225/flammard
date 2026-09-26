@@ -122,7 +122,7 @@ export default function ScorecardManager({ metrics, entries, periods }: Props) {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="p-3 bg-state-danger/10 border border-state-danger/20 rounded-lg text-sm text-state-danger">{error}</div>
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-800">{error}</div>
       )}
 
       {/* ── Grid ───────────────────────────────────────── */}
@@ -132,21 +132,21 @@ export default function ScorecardManager({ metrics, entries, periods }: Props) {
           <p className="text-xs text-ink-muted">Add the numbers you review every week. TaxDome imports fill them in automatically.</p>
         </div>
       ) : (
-        <div className="border border-line rounded-xl overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="card p-0 overflow-x-auto">
+          <table className="table-brand">
             <thead>
-              <tr className="bg-bg-elevated text-xs text-ink-muted uppercase tracking-wide">
-                <th className="text-left font-semibold px-4 py-3 min-w-[220px]">Metric</th>
-                <th className="text-left font-semibold px-3 py-3">Goal</th>
+              <tr>
+                <th className="min-w-[220px]">Metric</th>
+                <th>Goal</th>
                 {periods.map((p) => (
-                  <th key={p} className="text-right font-semibold px-3 py-3 whitespace-nowrap">{p}</th>
+                  <th key={p} className="text-right whitespace-nowrap">{p}</th>
                 ))}
-                <th className="px-3 py-3"></th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {metrics.map((m, i) => (
-                <tr key={m.id} className={i < metrics.length - 1 ? 'border-b border-line' : ''}>
+              {metrics.map((m) => (
+                <tr key={m.id}>
                   <td className="px-4 py-3">
                     <p className="font-medium text-ink-primary">{m.title}</p>
                     <p className="text-xs text-ink-muted">
@@ -165,7 +165,7 @@ export default function ScorecardManager({ metrics, entries, periods }: Props) {
                           ? 'text-state-danger'
                           : 'text-ink-primary';
                     return (
-                      <td key={p} className={`px-3 py-3 text-right font-mono whitespace-nowrap ${cls}`} title={e?.notes ?? (e?.source === 'taxdome' ? 'Imported from TaxDome' : '')}>
+                      <td key={p} className={`text-right font-semibold tabular-nums whitespace-nowrap ${cls}`} title={e?.notes ?? (e?.source === 'taxdome' ? 'Imported from TaxDome' : '')}>
                         {e?.value ?? <span className="text-ink-muted">·</span>}
                         {e?.source === 'taxdome' && <span className="ml-1 text-[10px] text-ink-muted align-top">TD</span>}
                       </td>

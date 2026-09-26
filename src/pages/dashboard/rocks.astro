@@ -40,19 +40,13 @@ const STATUS_COLORS: Record<string, string> = {
 };
 ---
 
-<Dashboard title="Rocks">
-  <div class="flex items-center justify-between mb-8">
-    <div>
-      <h1 class="text-2xl font-semibold text-ink-primary">Rocks</h1>
-      <p class="text-sm text-ink-secondary mt-1">Quarterly goals tracked across all meetings.</p>
+<Dashboard eyebrow="EOS" title="Rocks" description="Quarterly goals tracked across all meetings.">
+  {onTrackPct !== null && (
+    <div slot="actions" class="text-right">
+      <div class="font-display text-3xl font-semibold tracking-tight text-ink-primary tabular-nums">{onTrackPct}%</div>
+      <div class="eyebrow">on track</div>
     </div>
-    {onTrackPct !== null && (
-      <div class="text-right">
-        <div class="text-3xl font-semibold text-ink-primary">{onTrackPct}%</div>
-        <div class="text-xs text-ink-muted">on track</div>
-      </div>
-    )}
-  </div>
+  )}
 
   <!-- Stats row -->
   {rocks && rocks.length > 0 && (
@@ -63,9 +57,9 @@ const STATUS_COLORS: Record<string, string> = {
         { label: 'Complete', val: statusGroups.complete.length, cls: 'text-accent' },
         { label: 'Dropped', val: statusGroups.dropped.length, cls: 'text-ink-muted' },
       ].map(({ label, val, cls }) => (
-        <div class="card py-4">
-          <div class={`text-2xl font-semibold ${cls}`}>{val}</div>
-          <div class="text-xs text-ink-muted mt-1">{label}</div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">{label}</p>
+          <p class={`stat-tile-value ${cls}`}>{val}</p>
         </div>
       ))}
     </div>
@@ -88,7 +82,7 @@ const STATUS_COLORS: Record<string, string> = {
               {STATUS_LABELS[status as keyof typeof STATUS_LABELS]}
               <span class="ml-1.5 font-normal">({group.length})</span>
             </p>
-            <div class="border border-line rounded-xl overflow-hidden">
+            <div class="card p-0 overflow-hidden">
               {group.map((rock, i) => (
                 <div class={`flex items-center gap-4 px-5 py-4 ${i < group.length - 1 ? 'border-b border-line' : ''}`}>
                   <span class={STATUS_COLORS[rock.status]}>
