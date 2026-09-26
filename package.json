@@ -8,6 +8,7 @@
     "preview": "astro preview",
     "astro": "astro",
     "db:setup": "node scripts/db-setup.mjs",
+    "people:create-owner": "node scripts/create-owner.mjs",
     "vibe-bridge": "node bridge/vibe-bridge.mjs"
   },
   "dependencies": {
