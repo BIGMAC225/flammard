@@ -24,7 +24,8 @@ export const POST: APIRoute = async ({ params, cookies }) => {
     date: string;
     attendees: Attendee[];
     transcript: string | null;
-  }>(params.id, 'id, title, date::text as date, attendees, transcript');
+    team: string;
+  }>(params.id, 'id, title, date::text as date, attendees, transcript, team');
   if (!meeting) return notFound();
   if (!meeting.transcript) return json({ error: 'Upload a transcript before analyzing' }, 400);
 
@@ -32,10 +33,16 @@ export const POST: APIRoute = async ({ params, cookies }) => {
   // Context so the model can match misheard names to real rocks/to-dos/issues
   const [rocks, openTodos, openIssues] = await Promise.all([
     many<{ title: string; owner: string | null; status: string }>(
-      db`select title, owner, status from rocks where status in ('on_track', 'off_track')`
+      db`select title, owner, status from rocks where team = ${meeting.team} and status in ('on_track', 'off_track')`
     ),
-    many<{ title: string; owner: string | null }>(db`select title, owner from todos where status = 'open'`),
-    many<{ title: string }>(db`select title from issues where status = 'open'`),
+    many<{ title: string; owner: string | null }>(db`
+      select t.title, t.owner from todos t join meetings m on m.id = t.meeting_id
+      where m.team = ${meeting.team} and t.status = 'open'
+    `),
+    many<{ title: string }>(db`
+      select i.title from issues i join meetings m on m.id = i.meeting_id
+      where m.team = ${meeting.team} and i.status = 'open'
+    `),
   ]);
 
   return streamJSON(async () => {

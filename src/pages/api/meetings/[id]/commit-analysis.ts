@@ -11,9 +11,9 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const meeting = await getMeeting<{ id: string; status: string; analysis_status: string }>(
+  const meeting = await getMeeting<{ id: string; status: string; analysis_status: string; team: string }>(
     params.id,
-    'id, status, analysis_status'
+    'id, status, analysis_status, team'
   );
   if (!meeting) return notFound();
 
@@ -53,7 +53,9 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
 
     // ── Rocks: update the master rock, snapshot it for this meeting ───────
     for (const r of a.rocks) {
-      let master = await one<{ id: string }>(db`select id from rocks where lower(title) = lower(${r.title}) limit 1`);
+      let master = await one<{ id: string }>(
+        db`select id from rocks where team = ${meeting.team} and lower(title) = lower(${r.title}) limit 1`
+      );
       if (master) {
         await db`
           update rocks set status = ${r.status}, owner = coalesce(${r.owner}, owner), updated_at = now()
@@ -61,7 +63,8 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
         `;
       } else {
         master = await one<{ id: string }>(db`
-          insert into rocks (title, owner, status, notes) values (${r.title}, ${r.owner}, ${r.status}, ${r.notes}) returning id
+          insert into rocks (team, title, owner, status, notes)
+          values (${meeting.team}, ${r.title}, ${r.owner}, ${r.status}, ${r.notes}) returning id
         `);
       }
       await db`
@@ -78,7 +81,10 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
       if (t.status === 'open') continue;
       await db`
         update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now()
-        where id = (select id from todos where status = 'open' and lower(title) = lower(${t.title}) limit 1)
+        where id = (
+          select t.id from todos t join meetings m on m.id = t.meeting_id
+          where m.team = ${meeting.team} and t.status = 'open' and lower(t.title) = lower(${t.title}) limit 1
+        )
       `;
     }
 
@@ -92,7 +98,10 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     for (const i of a.issues_solved) {
       const rows = await db`
         update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, updated_at = now()
-        where id = (select id from issues where status = 'open' and lower(title) = lower(${i.title}) limit 1)
+        where id = (
+          select i.id from issues i join meetings m on m.id = i.meeting_id
+          where m.team = ${meeting.team} and i.status = 'open' and lower(i.title) = lower(${i.title}) limit 1
+        )
         returning id
       `;
       if (!rows.length) {

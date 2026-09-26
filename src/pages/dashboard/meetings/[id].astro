@@ -8,6 +8,7 @@ import IssuesPanel from '../../../components/IssuesPanel';
 import HeadlinesPanel from '../../../components/HeadlinesPanel';
 import { many, one, sql } from '../../../lib/db';
 import { getMeeting } from '../../../lib/api';
+import { teamLabel } from '../../../lib/teams';
 import type { Minutes, MeetingRock, Todo, Issue, Headline, Attendee, Meeting } from '../../../types';
 
 const { id } = Astro.params;
@@ -50,7 +51,7 @@ const defaultTab = meeting.analysis_status === 'committed' ? 'eos' : 'session';
 const activeTab = new URL(Astro.request.url).searchParams.get('tab') ?? defaultTab;
 ---
 
-<Dashboard eyebrow="L10 meeting" title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
+<Dashboard eyebrow={`${teamLabel(meeting.team)} · L10`} title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
 
   <!-- Meeting meta -->
   <div class="flex flex-wrap items-center gap-3 mb-2 -mt-4">

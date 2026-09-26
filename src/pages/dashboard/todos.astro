@@ -1,11 +1,14 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
 import { many, sql } from '../../lib/db';
+import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Todo } from '../../types';
 
+const team = currentTeam(Astro.cookies);
 const rows = await many<Todo & { meeting_title: string; meeting_date: string }>(sql()`
   select t.*, m.title as meeting_title, m.date::text as meeting_date
   from todos t join meetings m on m.id = t.meeting_id
+  where m.team = ${team}
   order by t.created_at desc
 `);
 const todos = rows.map((t) => ({ ...t, meetings: { title: t.meeting_title, date: t.meeting_date } }));
@@ -30,7 +33,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 ---
 
-<Dashboard eyebrow="EOS" title="To-Dos" description="7-day action items across all L10 meetings.">
+<Dashboard eyebrow={teamLabel(team)} title="To-Dos" description="7-day action items across all L10 meetings.">
   {open.length > 0 && (
     <div slot="actions" class="text-right">
       <div class="font-display text-3xl font-semibold tracking-tight text-amber-900 tabular-nums">{open.length}</div>

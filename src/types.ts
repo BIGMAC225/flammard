@@ -42,9 +42,11 @@ export interface DiscussionPoint {
   notes: string;
 }
 
+export type TeamId = 'leadership' | 'management';
+
 export interface Meeting {
   id: string;
-  org_id: string | null;
+  team: TeamId;
   title: string;
   date: string;
   location: string | null;
@@ -94,6 +96,7 @@ export interface Approval {
 
 export interface Rock {
   id: string;
+  team: TeamId;
   title: string;
   owner: string | null;
   status: RockStatus;
@@ -141,6 +144,7 @@ export interface Issue {
 
 export interface ScorecardMetric {
   id: string;
+  team: TeamId;
   title: string;
   owner: string | null;
   goal: string | null;
@@ -205,6 +209,7 @@ export interface ScorecardExtraction {
 
 export interface TaxDomeImport {
   id: string;
+  team: TeamId;
   received_at: string;
   file_name: string | null;
   report_title: string | null;

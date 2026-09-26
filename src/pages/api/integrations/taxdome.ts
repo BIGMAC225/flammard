@@ -6,6 +6,7 @@ import { json } from '../../../lib/api';
 import { many, one, sql } from '../../../lib/db';
 import { extractScorecardFromReport } from '../../../lib/claude';
 import { streamJSON } from '../../../lib/stream-json';
+import { isTeam } from '../../../lib/teams';
 import type { ScorecardMetric } from '../../../types';
 
 // Inbound webhook for TaxDome report exports, called by Zapier when the
@@ -18,6 +19,7 @@ import type { ScorecardMetric } from '../../../types';
 //   4. JSON { "text": "..." } (already-extracted text)
 //
 // Auth: `Authorization: Bearer <TAXDOME_WEBHOOK_SECRET>`.
+// Team: `?team=leadership|management` (default leadership) — one Zap per team.
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -45,8 +47,11 @@ async function pdfToText(pdf: Buffer): Promise<string> {
   }
 }
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, url }) => {
   const secret = import.meta.env.TAXDOME_WEBHOOK_SECRET;
+  const teamParam = url.searchParams.get('team') ?? 'leadership';
+  if (!isTeam(teamParam)) return json({ error: 'Unknown team' }, 400);
+  const team = teamParam;
   if (!secret) return json({ error: 'TAXDOME_WEBHOOK_SECRET is not configured' }, 500);
 
   const auth = request.headers.get('authorization') ?? '';
@@ -102,14 +107,14 @@ export const POST: APIRoute = async ({ request }) => {
 
   return streamJSON(async () => {
     const metrics = await many<Pick<ScorecardMetric, 'id' | 'title' | 'goal' | 'unit' | 'frequency' | 'description'>>(
-      db`select id, title, goal, unit, frequency, description from scorecard_metrics where active order by sort_order`
+      db`select id, title, goal, unit, frequency, description from scorecard_metrics where active and team = ${team} order by sort_order`
     );
 
     // Records the failure so it shows on the Scorecard page, then throws
     const fail = async (message: string): Promise<never> => {
       await db`
-        insert into taxdome_imports (file_name, raw_text, status, error)
-        values (${fileName}, ${text}, 'failed', ${message})
+        insert into taxdome_imports (team, file_name, raw_text, status, error)
+        values (${team}, ${fileName}, ${text}, 'failed', ${message})
       `;
       throw new Error(message);
     };
@@ -142,8 +147,8 @@ export const POST: APIRoute = async ({ request }) => {
     let importRow: { id: string } | null = null;
     try {
       importRow = await one<{ id: string }>(db`
-        insert into taxdome_imports (file_name, report_title, period_start, period_end, raw_text, extracted, status, entries_written)
-        values (${fileName}, ${extracted.report_title}, ${periodStart}, ${periodDate}, ${text}, ${JSON.stringify(extracted)}::jsonb,
+        insert into taxdome_imports (team, file_name, report_title, period_start, period_end, raw_text, extracted, status, entries_written)
+        values (${team}, ${fileName}, ${extracted.report_title}, ${periodStart}, ${periodDate}, ${text}, ${JSON.stringify(extracted)}::jsonb,
                 'processed', ${extracted.values.length})
         returning id
       `);

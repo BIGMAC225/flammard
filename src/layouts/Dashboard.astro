@@ -1,6 +1,6 @@
 ---
 import Base from './Base.astro';
-import { TEAM_LABEL } from '../lib/auth';
+import { TEAMS, currentTeam } from '../lib/teams';
 
 interface Props {
   title?: string;
@@ -23,6 +23,8 @@ const NAV = [
   { href: '/dashboard/register', label: 'Register' },
 ];
 const path = Astro.url.pathname;
+const team = currentTeam(Astro.cookies);
+const switchNext = encodeURIComponent(path + Astro.url.search);
 const isActive = (item: (typeof NAV)[number]) =>
   item.exact ? path === item.href : path.startsWith(item.href);
 
@@ -66,7 +68,20 @@ const hasActions = Astro.slots.has('actions');
         </nav>
 
         <div class="flex items-center gap-2">
-          <span class="hidden sm:block text-xs text-ink-muted">{TEAM_LABEL}</span>
+          <!-- Team switcher: scopes every list on the site -->
+          <div class="flex gap-0.5 p-0.5 bg-bg-elevated rounded-full" role="group" aria-label="Team">
+            {TEAMS.map((t) => (
+              <a
+                href={`/api/team?set=${t.id}&next=${switchNext}`}
+                class={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                  team === t.id ? 'bg-bg-surface text-accent shadow-soft' : 'text-ink-secondary hover:text-ink-primary'
+                }`}
+                aria-current={team === t.id ? 'true' : undefined}
+              >
+                {t.short}
+              </a>
+            ))}
+          </div>
           <form method="POST" action="/api/auth/logout">
             <button type="submit" class="btn-ghost text-xs">Sign out</button>
           </form>

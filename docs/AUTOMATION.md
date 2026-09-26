@@ -42,13 +42,15 @@ Go to **Scorecard** and add the metrics you want tracked (revenue invoiced, AR o
 
 Reporting → open the dashboard/report → schedule an email export (PDF) to the address Zapier gives you below, at the cadence you review it (weekly for the L10).
 
+Each team (Leadership / Management) has its own scorecard, so the webhook URL carries a `?team=` parameter — copy it from the Scorecard page while that team is selected in the header. If both teams get a TaxDome report, make one Zap per team.
+
 ### In Zapier
 
 Create a Zap:
 
 1. **Trigger — Email by Zapier: New Inbound Email.** Zapier gives you an address like `something.abc123@zapiermail.com`. Use that as the TaxDome recipient. (If you'd rather keep it in your own mailbox, use the **Gmail: New Attachment** trigger with a label/filter for the TaxDome sender instead.)
 2. **Action — Webhooks by Zapier: POST.**
-   - **URL:** `https://<your-site>/api/integrations/taxdome` (shown on the Scorecard page)
+   - **URL:** `https://<your-site>/api/integrations/taxdome?team=leadership` (shown on the Scorecard page; `management` for the other team)
    - **Payload Type:** `form`
    - **File:** map the email's **Attachment** field
    - **Headers:** `Authorization` = `Bearer <TAXDOME_WEBHOOK_SECRET>`

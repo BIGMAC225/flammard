@@ -29,7 +29,8 @@ export const POST: APIRoute = async ({ params, cookies }) => {
     attendees: Attendee[];
     meeting_rating: number | null;
     conclude_notes: string | null;
-  }>(params.id, 'id, title, date::text, location, attendees, meeting_rating, conclude_notes');
+    team: string;
+  }>(params.id, 'id, title, date::text as date, location, attendees, meeting_rating, conclude_notes, team');
   if (!meeting) return notFound();
 
   const db = sql();
@@ -54,7 +55,7 @@ export const POST: APIRoute = async ({ params, cookies }) => {
     many<MeetingRock>(db`select * from meeting_rocks where meeting_id = ${id} order by created_at`),
     many<Todo>(db`select * from todos where meeting_id = ${id} order by created_at`),
     many<Issue>(db`select * from issues where meeting_id = ${id} order by created_at`),
-    many<ScorecardMetric>(db`select * from scorecard_metrics where active order by sort_order`),
+    many<ScorecardMetric>(db`select * from scorecard_metrics where active and team = ${meeting.team} order by sort_order`),
     many<ScorecardEntry>(db`
       select distinct on (e.metric_id) e.*, e.period_date::text as period_date
       from scorecard_entries e where e.period_date <= ${meeting.date}::date

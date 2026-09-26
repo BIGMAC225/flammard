@@ -1,9 +1,12 @@
 ---
 import Dashboard from '../../../layouts/Dashboard.astro';
 import MeetingForm from '../../../components/MeetingForm';
+import { currentTeam, teamLabel } from '../../../lib/teams';
+
+const team = currentTeam(Astro.cookies);
 ---
 
-<Dashboard eyebrow="Records" title="New meeting" description="Add the meeting details and attendees. You'll record and transcribe from the meeting page." back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
+<Dashboard eyebrow={teamLabel(team)} title="New meeting" description={`A ${teamLabel(team).toLowerCase()} meeting. Switch teams in the header to file it under the other team.`} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
   <div class="max-w-2xl">
     <MeetingForm client:load />
   </div>

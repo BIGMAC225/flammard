@@ -1,15 +1,21 @@
 -- Flammard schema for Netlify DB (Neon Postgres).
 -- Apply with `npm run db:setup` (reads NETLIFY_DATABASE_URL). Safe to re-run.
 --
--- There is one shared team login, so tables carry no per-user ownership and
--- there is no row-level security: every query goes through the app's API,
--- which checks the session cookie.
+-- There is one shared login, so tables carry no per-user ownership and there
+-- is no row-level security: every query goes through the app's API, which
+-- checks the session cookie.
+--
+-- Two EOS teams (leadership, management) share the login but keep separate
+-- meetings, rocks, to-dos, issues, headlines and scorecards. `team` lives on
+-- meetings, rocks and scorecard_metrics; everything else belongs to a meeting
+-- and inherits its team.
 
 create extension if not exists pgcrypto;
 
 -- ── Meetings ──────────────────────────────────────────────────────────────
 create table if not exists meetings (
   id               uuid primary key default gen_random_uuid(),
+  team             text not null default 'leadership' check (team in ('leadership', 'management')),
   title            text not null,
   date             date not null,
   location         text,
@@ -62,6 +68,7 @@ create table if not exists approvals (
 -- ── EOS ───────────────────────────────────────────────────────────────────
 create table if not exists rocks (
   id          uuid primary key default gen_random_uuid(),
+  team        text not null default 'leadership' check (team in ('leadership', 'management')),
   title       text not null,
   owner       text,
   status      text not null default 'on_track'
@@ -126,6 +133,7 @@ create table if not exists headlines (
 -- ── Scorecard ─────────────────────────────────────────────────────────────
 create table if not exists scorecard_metrics (
   id           uuid primary key default gen_random_uuid(),
+  team         text not null default 'leadership' check (team in ('leadership', 'management')),
   title        text not null,
   owner        text,
   goal         text,
@@ -157,6 +165,7 @@ create table if not exists scorecard_entries (
 -- One row per TaxDome report received through the webhook
 create table if not exists taxdome_imports (
   id               uuid primary key default gen_random_uuid(),
+  team             text not null default 'leadership' check (team in ('leadership', 'management')),
   received_at      timestamptz not null default now(),
   file_name        text,
   report_title     text,
@@ -172,6 +181,9 @@ create table if not exists taxdome_imports (
 
 -- ── Indexes ───────────────────────────────────────────────────────────────
 create index if not exists meetings_date_idx        on meetings(date desc);
+create index if not exists meetings_team_idx        on meetings(team);
+create index if not exists rocks_team_idx           on rocks(team);
+create index if not exists scorecard_metrics_team_idx on scorecard_metrics(team);
 create index if not exists meeting_rocks_meeting_idx on meeting_rocks(meeting_id);
 create index if not exists todos_meeting_idx        on todos(meeting_id);
 create index if not exists todos_status_idx         on todos(status);

@@ -1,10 +1,12 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
 import { many, sql } from '../../lib/db';
+import { currentTeam, teamLabel } from '../../lib/teams';
 import type { Rock } from '../../types';
 
+const team = currentTeam(Astro.cookies);
 const rocks = await many<Rock>(
-  sql()`select *, due_date::text as due_date from rocks order by status asc, created_at desc`
+  sql()`select *, due_date::text as due_date from rocks where team = ${team} order by status asc, created_at desc`
 );
 
 const statusGroups = {
@@ -34,7 +36,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 ---
 
-<Dashboard eyebrow="EOS" title="Rocks" description="Quarterly goals tracked across all meetings.">
+<Dashboard eyebrow={teamLabel(team)} title="Rocks" description="Quarterly goals tracked across all meetings.">
   {onTrackPct !== null && (
     <div slot="actions" class="text-right">
       <div class="font-display text-3xl font-semibold tracking-tight text-ink-primary tabular-nums">{onTrackPct}%</div>

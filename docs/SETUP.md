@@ -42,6 +42,10 @@ Redeploy after changing them.
 
 Nothing to configure. Two stores are created on first use: `recordings` (browser audio, chunked) and `minutes-pdf`. Free tier is generous; each blob can be up to 5 GB.
 
+## Teams
+
+There are two EOS teams — **Leadership** and **Management** — behind the one login. The switcher in the header picks the active team, and every list (meetings, rocks, to-dos, issues, scorecard, register) shows only that team's items. A meeting is filed under whichever team is active when it's created and keeps that team. Rocks and scorecard metrics belong to a team too.
+
 ## Local development
 
 ```bash
