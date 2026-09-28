@@ -48,7 +48,7 @@ async function pdfToText(pdf: Buffer): Promise<string> {
   }
 }
 
-export const POST: APIRoute = async ({ request, url }) => {
+export const POST: APIRoute = async ({ request, url, locals }) => {
   const secret = env('TAXDOME_WEBHOOK_SECRET');
   const teamParam = url.searchParams.get('team') ?? 'leadership';
   if (!isTeam(teamParam)) return json({ error: 'Unknown team' }, 400);
@@ -129,7 +129,7 @@ export const POST: APIRoute = async ({ request, url }) => {
 
   const db = sql();
 
-  return streamJSON(async () => {
+  const work = async () => {
     const metrics = await many<Pick<ScorecardMetric, 'id' | 'title' | 'goal' | 'unit' | 'frequency' | 'description'>>(
       db`select id, title, goal, unit, frequency, description from scorecard_metrics where active and team = ${team} order by sort_order`
     );
@@ -208,5 +208,33 @@ export const POST: APIRoute = async ({ request, url }) => {
       entries_written: extracted.values.length,
       unmatched: extracted.unmatched,
     };
-  });
+  };
+
+  // ?async=1 (used by the Flammard Zapier app, whose actions time out after
+  // about 30s): answer at once and finish the import after the response.
+  // The result lands in the Scorecard page's import log either way.
+  const waitUntil = (locals as { netlify?: { context?: { waitUntil?: (p: Promise<unknown>) => void } } }).netlify?.context
+    ?.waitUntil;
+  if (url.searchParams.get('async') === '1' && typeof waitUntil === 'function') {
+    waitUntil(
+      work()
+        .then((r) => console.log('[taxdome] async import done', JSON.stringify(r)))
+        .catch((err) => console.log('[taxdome] async import failed', err instanceof Error ? err.message : err))
+    );
+    return json({ ok: true, accepted: true, files: fileName, note: 'Import is running; check the Scorecard page in a minute.' }, 202);
+  }
+  return streamJSON(work);
+};
+
+// Connection check for the Flammard Zapier app: 200 with the team's active
+// metric count when the secret is right, 401 otherwise.
+export const GET: APIRoute = async ({ request, url }) => {
+  const secret = env('TAXDOME_WEBHOOK_SECRET');
+  if (!secret) return json({ error: 'TAXDOME_WEBHOOK_SECRET is not configured' }, 500);
+  const token = (request.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
+  if (!secretMatches(token, secret)) return json({ error: 'Unauthorized' }, 401);
+  const team = url.searchParams.get('team') ?? 'leadership';
+  if (!isTeam(team)) return json({ error: 'Unknown team' }, 400);
+  const row = await one<{ n: number }>(sql()`select count(*)::int as n from scorecard_metrics where active and team = ${team}`);
+  return json({ ok: true, team, active_metrics: row?.n ?? 0, ai_ready: Boolean(env('ANTHROPIC_API_KEY')) });
 };
