@@ -294,7 +294,7 @@ export async function extractScorecardFromReport(
   reportText: string,
   metrics: Pick<ScorecardMetric, 'id' | 'title' | 'goal' | 'unit' | 'frequency' | 'description'>[]
 ): Promise<ScorecardExtraction> {
-  const system = `You read exported TaxDome reports (text extracted from PDF, so tables may be flattened) and pull out the numbers a CPA firm tracks on its EOS scorecard. Only report a value when the report clearly contains it; leave a metric out rather than guess.`;
+  const system = `You read exported TaxDome reports: either CSV files (one per report tile, each under a "=== File: name ===" line, with the filters and date range in the header lines) or text extracted from a PDF (tables may be flattened) and pull out the numbers a CPA firm tracks on its EOS scorecard. Only report a value when the report clearly contains it; leave a metric out rather than guess.`;
 
   const metricList = metrics
     .map((m) => {
@@ -308,7 +308,7 @@ export async function extractScorecardFromReport(
   const user = `Scorecard metrics to look for:
 ${metricList}
 
-For each metric found, return its id and the value as it appears (keep currency symbols and % signs). Set on_track by comparing to the goal when both are numeric, otherwise null. Put any other headline figures from the report that don't map to a metric in "unmatched" (label + value) so they can be reviewed. Dates as YYYY-MM-DD; period_end is the last day the report covers.
+For each metric found, return its id and the value as it appears (keep currency symbols and % signs). Set on_track by comparing to the goal when both are numeric, otherwise null. Put any other headline figures from the report that don't map to a metric in "unmatched" (label + value) so they can be reviewed. Values in CSV files are unrounded; round currency to whole dollars and percentages to one decimal. Dates as YYYY-MM-DD; period_end is the last day the report covers (for CSVs, the end of the "Last 7 Days" or "Last 1 Week" range).
 
 --- REPORT ---
 ${reportText}

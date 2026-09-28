@@ -66,14 +66,31 @@ export const POST: APIRoute = async ({ request, url }) => {
   try {
     const contentType = request.headers.get('content-type') ?? '';
     if (contentType.includes('multipart/form-data')) {
+      // TaxDome's scheduled liveboard email can carry one PDF or one CSV per
+      // tile; Zapier forwards all of them. Text files are joined (each under
+      // its file name) and handed to the extractor together; a PDF is used
+      // when there's no text file.
       const form = await request.formData();
+      const texts: string[] = [];
+      const names: string[] = [];
+      let total = 0;
       for (const value of form.values()) {
-        if (value instanceof File) {
-          if (value.size > MAX_FILE_BYTES) return json({ error: 'File is too large (20 MB max)' }, 413);
-          fileName = value.name;
-          pdf = Buffer.from(await value.arrayBuffer());
-          break;
+        if (!(value instanceof File)) continue;
+        total += value.size;
+        if (value.size > MAX_FILE_BYTES || total > MAX_FILE_BYTES) return json({ error: 'Files are too large (20 MB max)' }, 413);
+        const bytes = Buffer.from(await value.arrayBuffer());
+        const isPdf = /pdf/i.test(value.type) || /\.pdf$/i.test(value.name) || bytes.subarray(0, 5).toString('latin1') === '%PDF-';
+        names.push(value.name);
+        if (isPdf) {
+          if (!pdf) pdf = bytes;
+        } else {
+          texts.push(`=== File: ${value.name} ===\n${bytes.toString('utf8').replace(/^﻿/, '').trim()}`);
         }
+      }
+      fileName = names.length ? names.join(', ').slice(0, 500) : null;
+      if (texts.length) {
+        text = texts.join('\n\n');
+        pdf = null;
       }
     } else {
       const body = (await request.json()) as {
