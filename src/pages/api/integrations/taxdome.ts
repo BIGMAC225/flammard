@@ -57,6 +57,11 @@ export const POST: APIRoute = async ({ request, url }) => {
 
   const auth = request.headers.get('authorization') ?? '';
   const token = auth.replace(/^Bearer\s+/i, '').trim();
+  // One line per call so a Zap can be debugged from the function log (no secrets logged)
+  console.log(
+    `[taxdome] request team=${team} type=${(request.headers.get('content-type') ?? '').split(';')[0]} ` +
+      `length=${request.headers.get('content-length') ?? '?'} auth=${secretMatches(token, secret) ? 'ok' : auth ? 'wrong' : 'missing'}`
+  );
   if (!secretMatches(token, secret)) return json({ error: 'Unauthorized' }, 401);
 
   let fileName: string | null = null;
@@ -88,6 +93,7 @@ export const POST: APIRoute = async ({ request, url }) => {
         }
       }
       fileName = names.length ? names.join(', ').slice(0, 500) : null;
+      console.log(`[taxdome] files=${names.length} text=${texts.length} pdf=${pdf ? 'yes' : 'no'} names=${fileName ?? ''}`);
       if (texts.length) {
         text = texts.join('\n\n');
         pdf = null;
