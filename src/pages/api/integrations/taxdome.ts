@@ -4,7 +4,7 @@ import { PDFParse } from 'pdf-parse';
 import { getData as pdfWorkerData } from 'pdf-parse/worker';
 import { json } from '../../../lib/api';
 import { many, one, sql } from '../../../lib/db';
-import { extractScorecardFromReport } from '../../../lib/claude';
+import { aiProvider, extractScorecardFromReport } from '../../../lib/claude';
 import { streamJSON } from '../../../lib/stream-json';
 import { isTeam } from '../../../lib/teams';
 import { env } from '../../../lib/env';
@@ -236,5 +236,5 @@ export const GET: APIRoute = async ({ request, url }) => {
   const team = url.searchParams.get('team') ?? 'leadership';
   if (!isTeam(team)) return json({ error: 'Unknown team' }, 400);
   const row = await one<{ n: number }>(sql()`select count(*)::int as n from scorecard_metrics where active and team = ${team}`);
-  return json({ ok: true, team, active_metrics: row?.n ?? 0, ai_ready: Boolean(env('ANTHROPIC_API_KEY')) });
+  return json({ ok: true, team, active_metrics: row?.n ?? 0, ai_provider: aiProvider() });
 };
