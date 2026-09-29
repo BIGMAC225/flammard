@@ -11,10 +11,10 @@ const MODEL = 'claude-opus-5';
 //   NVIDIA (build.nvidia.com, OpenAI-compatible) when NVIDIA_API_KEY is set,
 //   Anthropic Claude when ANTHROPIC_API_KEY is set.
 // AI_PROVIDER=nvidia|anthropic picks one when both keys exist (default nvidia).
-// NVIDIA_MODEL overrides the model (default meta/llama-3.3-70b-instruct).
+// NVIDIA_MODEL overrides the model (default moonshotai/kimi-k3).
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-const NVIDIA_DEFAULT_MODEL = 'meta/llama-3.3-70b-instruct';
+const NVIDIA_DEFAULT_MODEL = 'moonshotai/kimi-k3';
 
 let _client: Anthropic | null = null;
 function client(): Anthropic {
@@ -63,14 +63,36 @@ async function structured<S extends z.ZodType>(schema: S, call: StructuredCall):
   return nvidiaStructured(schema, call);
 }
 
-/** Pulls the JSON object out of a chat reply (tolerates code fences and stray prose). */
+/**
+ * Pulls the first complete JSON object out of a chat reply. Tolerates
+ * reasoning blocks, code fences and prose before or after the object.
+ */
 function extractJson(text: string): unknown {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const body = fenced ? fenced[1] : text;
-  const start = body.indexOf('{');
-  const end = body.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('no JSON object in the reply');
-  return JSON.parse(body.slice(start, end + 1));
+  const body = text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
+  let start = body.indexOf('{');
+  while (start >= 0) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < body.length; i++) {
+      const c = body[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === '\\') escaped = true;
+        else if (c === '"') inString = false;
+      } else if (c === '"') inString = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) {
+        try {
+          return JSON.parse(body.slice(start, i + 1));
+        } catch {
+          break; // not valid JSON from here; try the next "{"
+        }
+      }
+    }
+    start = body.indexOf('{', start + 1);
+  }
+  throw new Error('no JSON object in the reply');
 }
 
 async function nvidiaStructured<S extends z.ZodType>(schema: S, call: StructuredCall): Promise<z.infer<S>> {
@@ -82,6 +104,9 @@ async function nvidiaStructured<S extends z.ZodType>(schema: S, call: Structured
     `It must match this JSON Schema exactly; include every property, using null where a value is unknown:\n${JSON.stringify(jsonSchema)}`;
   const maxTokens = Math.min(call.maxTokens, Number(env('NVIDIA_MAX_TOKENS')) || 8192);
 
+  // `guided` = the first try: low temperature plus constrained JSON decoding.
+  // Some hosted models reject either (fixed sampling, no nvext), so a 400/422
+  // falls back to a bare request with only the prompt's JSON instructions.
   const ask = async (messages: Array<{ role: string; content: string }>, guided: boolean) => {
     const res = await fetch(NVIDIA_URL, {
       method: 'POST',
@@ -89,12 +114,9 @@ async function nvidiaStructured<S extends z.ZodType>(schema: S, call: Structured
       body: JSON.stringify({
         model,
         messages,
-        temperature: 0.1,
-        top_p: 0.9,
         max_tokens: maxTokens,
         stream: false,
-        // Constrained decoding where the hosted model supports it
-        ...(guided ? { nvext: { guided_json: jsonSchema } } : {}),
+        ...(guided ? { temperature: 0.1, nvext: { guided_json: jsonSchema } } : {}),
       }),
       signal: AbortSignal.timeout(180_000),
     });
@@ -430,5 +452,9 @@ ${reportText}
 
   // Drop anything that points at a metric we didn't ask about
   const known = new Set(metrics.map((m) => m.id));
-  return { ...parsed, values: parsed.values.filter((v) => known.has(v.metric_id)) };
+  // …and anything the report didn't actually contain (blank values)
+  return {
+    ...parsed,
+    values: parsed.values.filter((v) => known.has(v.metric_id) && String(v.value ?? '').trim() !== ''),
+  };
 }
