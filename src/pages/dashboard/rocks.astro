@@ -1,17 +1,26 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
 import StepsPanel from '../../components/StepsPanel';
+import { RockControls } from '../../components/RoadmapEditor';
+import { listPeopleOptions } from '../../lib/people';
 import { many, sql } from '../../lib/db';
 import { stepsForMany } from '../../lib/steps';
 import { activateDueRocks } from '../../lib/roadmap';
 import { currentTeam, teamLabel } from '../../lib/teams';
-import type { Rock } from '../../types';
+import type { Period, Rock } from '../../types';
 
 const team = currentTeam(Astro.cookies);
 await activateDueRocks(team);
 const rocks = await many<Rock>(
   sql()`select *, due_date::text as due_date from rocks where team = ${team} order by status asc, created_at desc`
 );
+
+const [periods, people] = await Promise.all([
+  many<Period>(
+    sql()`select id, team, name, start_date::text as start_date, end_date::text as end_date from periods where team = ${team} order by start_date`
+  ),
+  listPeopleOptions(true),
+]);
 
 const stepsByRock = await stepsForMany('rock', rocks.filter((r) => r.status === 'on_track' || r.status === 'off_track').map((r) => r.id));
 
@@ -91,13 +100,22 @@ const STATUS_COLORS: Record<string, string> = {
             <div class="card p-0 overflow-hidden">
               {group.map((rock, i) => (
                 <div class={`flex items-center gap-4 px-5 py-4 ${i < group.length - 1 ? 'border-b border-line' : ''}`}>
-                  <span class={STATUS_COLORS[rock.status]}>
-                    {STATUS_LABELS[rock.status as keyof typeof STATUS_LABELS]}
-                  </span>
                   <div class="flex-1 min-w-0">
-                    <p class="text-sm font-medium text-ink-primary truncate">{rock.title}</p>
-                    <div class="flex items-center gap-3 mt-0.5">
-                      {rock.owner && <p class="text-xs text-ink-muted">{rock.owner}</p>}
+                    <p class="text-sm font-medium text-ink-primary">{rock.title}</p>
+                    <div class="mt-1.5">
+                      <RockControls
+                        rockId={rock.id}
+                        status={rock.status}
+                        periodId={rock.period_id ?? null}
+                        periods={periods}
+                        owner={rock.owner}
+                        ownerId={rock.owner_id ?? null}
+                        team={team}
+                        people={people}
+                        client:visible
+                      />
+                    </div>
+                    <div class="flex items-center gap-3 mt-1">
                       {rock.quarter && <p class="text-xs text-ink-muted">{rock.quarter}</p>}
                       {rock.due_date && <p class="text-xs text-ink-muted">Due {rock.due_date}</p>}
                     </div>
