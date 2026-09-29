@@ -1,6 +1,7 @@
 ---
 import Dashboard from '../../../layouts/Dashboard.astro';
 import MinutesDraftEditor from '../../../components/MinutesDraftEditor';
+import TangentAlert from '../../../components/TangentAlert';
 import MeetingSession from '../../../components/MeetingSession';
 import RocksPanel from '../../../components/RocksPanel';
 import TodoPanel from '../../../components/TodoPanel';
@@ -59,6 +60,7 @@ const defaultOwner = me.kind === 'person' ? { owner_id: me.id, owner: me.name } 
 ---
 
 <Dashboard eyebrow={`${teamLabel(meeting.team)} · L10`} title={meeting.title} back={{ href: '/dashboard/meetings', label: 'Meetings' }}>
+  <div slot="actions"><TangentAlert compact client:load /></div>
 
   <!-- Meeting meta -->
   <div class="flex flex-wrap items-center gap-3 mb-2 -mt-4">
