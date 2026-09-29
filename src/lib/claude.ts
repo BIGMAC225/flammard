@@ -6,11 +6,153 @@ import type { MeetingAnalysis, ProposedRoadmap, ProposedStep, ScorecardExtractio
 
 const MODEL = 'claude-opus-5';
 
+// ── Provider ──────────────────────────────────────────────────────────────
+// Every AI step returns JSON checked against a zod schema. Two providers:
+//   NVIDIA (build.nvidia.com, OpenAI-compatible) when NVIDIA_API_KEY is set,
+//   Anthropic Claude when ANTHROPIC_API_KEY is set.
+// AI_PROVIDER=nvidia|anthropic picks one when both keys exist (default nvidia).
+// NVIDIA_MODEL overrides the model (default meta/llama-3.3-70b-instruct).
+
+const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+const NVIDIA_DEFAULT_MODEL = 'meta/llama-3.3-70b-instruct';
+
 let _client: Anthropic | null = null;
 function client(): Anthropic {
   const apiKey = env('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
   return (_client ??= new Anthropic({ apiKey }));
+}
+
+/** Which provider will run, or null when no key is configured. */
+export function aiProvider(): 'nvidia' | 'anthropic' | null {
+  const nvidia = Boolean(env('NVIDIA_API_KEY'));
+  const anthropic = Boolean(env('ANTHROPIC_API_KEY'));
+  const pick = (env('AI_PROVIDER') ?? '').toLowerCase();
+  if (pick === 'anthropic' && anthropic) return 'anthropic';
+  if (pick === 'nvidia' && nvidia) return 'nvidia';
+  return nvidia ? 'nvidia' : anthropic ? 'anthropic' : null;
+}
+
+interface StructuredCall {
+  system: string;
+  user: string;
+  maxTokens: number;
+  effort: 'low' | 'medium';
+  /** Used in error messages, e.g. "The analysis". */
+  label: string;
+}
+
+async function structured<S extends z.ZodType>(schema: S, call: StructuredCall): Promise<z.infer<S>> {
+  const provider = aiProvider();
+  if (!provider) throw new Error('No AI key is configured: set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in Netlify');
+
+  if (provider === 'anthropic') {
+    const response = await client().messages.parse({
+      model: MODEL,
+      max_tokens: call.maxTokens,
+      output_config: { effort: call.effort, format: zodOutputFormat(schema as any) },
+      system: call.system,
+      messages: [{ role: 'user', content: call.user }],
+    });
+    if (response.stop_reason === 'refusal') throw new Error(`${call.label} was declined by the model`);
+    const parsed = response.parsed_output as z.infer<S> | null;
+    if (!parsed) throw new Error(`Could not parse ${call.label.toLowerCase()}`);
+    return parsed;
+  }
+
+  return nvidiaStructured(schema, call);
+}
+
+/** Pulls the JSON object out of a chat reply (tolerates code fences and stray prose). */
+function extractJson(text: string): unknown {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = fenced ? fenced[1] : text;
+  const start = body.indexOf('{');
+  const end = body.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('no JSON object in the reply');
+  return JSON.parse(body.slice(start, end + 1));
+}
+
+async function nvidiaStructured<S extends z.ZodType>(schema: S, call: StructuredCall): Promise<z.infer<S>> {
+  const key = env('NVIDIA_API_KEY')!;
+  const model = env('NVIDIA_MODEL') || NVIDIA_DEFAULT_MODEL;
+  const jsonSchema = z.toJSONSchema(schema);
+  const system =
+    `${call.system}\n\nReply with ONE JSON object and nothing else (no prose, no code fences). ` +
+    `It must match this JSON Schema exactly; include every property, using null where a value is unknown:\n${JSON.stringify(jsonSchema)}`;
+  const maxTokens = Math.min(call.maxTokens, Number(env('NVIDIA_MAX_TOKENS')) || 8192);
+
+  const ask = async (messages: Array<{ role: string; content: string }>, guided: boolean) => {
+    const res = await fetch(NVIDIA_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.1,
+        top_p: 0.9,
+        max_tokens: maxTokens,
+        stream: false,
+        // Constrained decoding where the hosted model supports it
+        ...(guided ? { nvext: { guided_json: jsonSchema } } : {}),
+      }),
+      signal: AbortSignal.timeout(180_000),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const err = new Error(`NVIDIA API ${res.status}: ${text.slice(0, 300)}`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
+    const data = JSON.parse(text) as { choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }> };
+    const choice = data.choices?.[0];
+    if (choice?.finish_reason === 'length') throw new Error(`${call.label} was cut off (NVIDIA max_tokens ${maxTokens})`);
+    return choice?.message?.content ?? '';
+  };
+
+  const messages = [
+    { role: 'system', content: system },
+    { role: 'user', content: call.user },
+  ];
+
+  let guided = true;
+  let reply: string;
+  try {
+    reply = await ask(messages, guided);
+  } catch (err) {
+    // Some hosted models reject nvext; fall back to plain JSON prompting
+    if ((err as { status?: number }).status === 400 || (err as { status?: number }).status === 422) {
+      guided = false;
+      reply = await ask(messages, guided);
+    } else {
+      throw err;
+    }
+  }
+
+  let problem = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const result = schema.safeParse(extractJson(reply));
+      if (result.success) return result.data;
+      problem = result.error.issues
+        .slice(0, 8)
+        .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+        .join('; ');
+    } catch (err) {
+      problem = err instanceof Error ? err.message : 'invalid JSON';
+    }
+    if (attempt === 0) {
+      reply = await ask(
+        [
+          ...messages,
+          { role: 'assistant', content: reply },
+          { role: 'user', content: `That reply did not match the schema (${problem}). Send the corrected JSON object only.` },
+        ],
+        guided
+      );
+    }
+  }
+  throw new Error(`Could not parse ${call.label.toLowerCase()} from ${model}: ${problem}`);
 }
 
 // ── Transcript → EOS meeting data ─────────────────────────────────────────
@@ -112,17 +254,7 @@ How to fill each field:
 ${transcript}
 --- END ---`;
 
-  const response = await client().messages.parse({
-    model: MODEL,
-    max_tokens: 16000,
-    output_config: { effort: 'medium', format: zodOutputFormat(MeetingAnalysisSchema) },
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-
-  if (response.stop_reason === 'refusal') throw new Error('Analysis was declined by the model');
-  const parsed = response.parsed_output;
-  if (!parsed) throw new Error('Could not parse the analysis response');
+  const parsed = await structured(MeetingAnalysisSchema, { system, user, maxTokens: 16000, effort: 'medium', label: 'The analysis' });
 
   return {
     ...parsed,
@@ -183,17 +315,7 @@ export async function breakDownItem(
   ];
   const user = lines.filter(Boolean).join('\n');
 
-  const response = await client().messages.parse({
-    model: MODEL,
-    max_tokens: 4000,
-    output_config: { effort: 'low', format: zodOutputFormat(BreakdownSchema) },
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-
-  if (response.stop_reason === 'refusal') throw new Error('The breakdown was declined by the model');
-  const parsed = response.parsed_output;
-  if (!parsed) throw new Error('Could not parse the breakdown response');
+  const parsed = await structured(BreakdownSchema, { system, user, maxTokens: 4000, effort: 'low', label: 'The breakdown' });
   return parsed.steps
     .map((s) => ({ title: s.title.trim(), substeps: s.substeps.map((x) => x.trim()).filter(Boolean) }))
     .filter((s) => s.title);
@@ -245,17 +367,7 @@ ${existing}How to fill it in:
 ${planText}
 --- END ---`;
 
-  const response = await client().messages.parse({
-    model: MODEL,
-    max_tokens: 16000,
-    output_config: { effort: 'medium', format: zodOutputFormat(RoadmapSchema) },
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-
-  if (response.stop_reason === 'refusal') throw new Error('The import was declined by the model');
-  const parsed = response.parsed_output;
-  if (!parsed) throw new Error('Could not parse the plan');
+  const parsed = await structured(RoadmapSchema, { system, user, maxTokens: 16000, effort: 'medium', label: 'The plan' });
 
   const clean = (r: z.infer<typeof ProposedRockSchema>) => ({
     title: r.title.trim(),
@@ -314,17 +426,7 @@ For each metric found, return its id and the value as it appears (keep currency 
 ${reportText}
 --- END ---`;
 
-  const response = await client().messages.parse({
-    model: MODEL,
-    max_tokens: 8000,
-    output_config: { effort: 'low', format: zodOutputFormat(ScorecardExtractionSchema) },
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-
-  if (response.stop_reason === 'refusal') throw new Error('Extraction was declined by the model');
-  const parsed = response.parsed_output;
-  if (!parsed) throw new Error('Could not parse the extraction response');
+  const parsed = await structured(ScorecardExtractionSchema, { system, user, maxTokens: 8000, effort: 'low', label: 'The extraction' });
 
   // Drop anything that points at a metric we didn't ask about
   const known = new Set(metrics.map((m) => m.id));
