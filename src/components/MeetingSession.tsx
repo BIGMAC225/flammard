@@ -350,37 +350,54 @@ export default function MeetingSession(props: Props) {
   };
 
   // ── 3. Analyze ─────────────────────────────────────────
-  // If the host cuts the streamed response off, the server may still finish
-  // and save the analysis; poll for it before giving up.
-  const pollForAnalysis = async (startedAt: string): Promise<MeetingAnalysis | null> => {
-    for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 5000));
+  // The server hands the work to a background job (it can take a few
+  // minutes on a long transcript) and this polls for the saved result, or
+  // for the job's error message.
+  const [analyzeElapsed, setAnalyzeElapsed] = useState(0);
+
+  const pollForAnalysis = async (startedAt: string): Promise<MeetingAnalysis> => {
+    const deadline = Date.now() + 15 * 60 * 1000;
+    const t0 = Date.now();
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 4000));
+      setAnalyzeElapsed(Math.round((Date.now() - t0) / 1000));
       const res = await fetch(`/api/meetings/${meetingId}/analyze`);
       if (!res.ok) continue;
-      const m = (await res.json()) as { analysis: MeetingAnalysis | null; analysis_status: AnalysisStatus; analyzed_at: string | null };
-      if (m.analysis && m.analyzed_at && m.analyzed_at > startedAt) return m.analysis;
+      const m = (await res.json()) as {
+        analysis: MeetingAnalysis | null;
+        analysis_status: AnalysisStatus;
+        analyzed_at: string | null;
+        analysis_started_at: string | null;
+        analysis_error: string | null;
+      };
+      // A newer run started (another tab): stop following this one
+      if (m.analysis_started_at && new Date(m.analysis_started_at).getTime() > new Date(startedAt).getTime() + 1000) {
+        throw new Error('Another analysis was started for this meeting. Reload to see it.');
+      }
+      if (m.analysis_error) throw new Error(m.analysis_error);
+      if (m.analysis && m.analyzed_at && new Date(m.analyzed_at).getTime() >= new Date(startedAt).getTime()) return m.analysis;
     }
-    return null;
+    throw new Error('The analysis is taking longer than 15 minutes. Reload the page later to check, or try again.');
   };
 
   const analyze = async () => {
     setAnalyzing(true);
+    setAnalyzeElapsed(0);
     setError('');
-    const startedAt = new Date().toISOString();
     try {
       let result: MeetingAnalysis | null = null;
-      try {
-        const res = await fetch(`/api/meetings/${meetingId}/analyze`, { method: 'POST' });
-        if (!res.ok) throw new Error((await res.json()).error ?? 'Analysis failed');
+      const res = await fetch(`/api/meetings/${meetingId}/analyze`, { method: 'POST' });
+      if (res.status === 202) {
+        const started = (await res.json()) as { started_at: string };
+        result = await pollForAnalysis(started.started_at);
+      } else {
+        // Inline fallback (no background function, e.g. local dev): streamed JSON
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Analysis failed');
         const json = await readStreamedJSON<{ analysis?: MeetingAnalysis }>(res);
         if (json.error) throw new Error(json.error);
         result = json.analysis ?? null;
-      } catch (err) {
-        // A network drop or truncated stream isn't necessarily a failure
-        if (err instanceof Error && !/^(Failed to fetch|Load failed|NetworkError)/.test(err.message) && err.message !== 'Analysis failed') throw err;
       }
-      if (!result) result = await pollForAnalysis(startedAt);
-      if (!result) throw new Error('Analysis did not finish. Try again, or paste a shorter transcript.');
+      if (!result) throw new Error('Analysis did not finish. Try again.');
       setAnalysis(result);
       setAnalysisStatus('ready');
     } catch (err) {
@@ -606,7 +623,7 @@ export default function MeetingSession(props: Props) {
           <div>
             {step(3, 'Extract the EOS sections', analysisStatus === 'committed')}
             <p className="text-sm text-ink-secondary mt-1 ml-[34px]">
-              Claude reads the transcript and drafts the summary, headlines, rock updates, to-dos and issues. Nothing is saved until you review and accept it.
+              AI reads the transcript and drafts the summary, headlines, rock updates, to-dos and issues. A long meeting can take a few minutes. Nothing is saved until you review and accept it.
             </p>
           </div>
           {hasTranscript && analysisStatus !== 'committed' && (
@@ -616,7 +633,9 @@ export default function MeetingSession(props: Props) {
                   <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="60 40" />
                   </svg>
-                  Analyzing…
+                  {analyzeElapsed > 0
+                    ? `Analyzing… ${Math.floor(analyzeElapsed / 60)}:${String(analyzeElapsed % 60).padStart(2, '0')}`
+                    : 'Analyzing…'}
                 </>
               ) : analysis ? (
                 'Re-analyze'
