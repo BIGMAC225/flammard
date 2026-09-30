@@ -8,5 +8,8 @@
  */
 export function env(name: string): string | undefined {
   const runtime = typeof process !== 'undefined' ? process.env?.[name] : undefined;
-  return runtime || (import.meta.env as Record<string, string | undefined>)[name] || undefined;
+  // import.meta.env only exists in the Astro build; plain Netlify functions
+  // (netlify/functions/*) import this file too and have just process.env
+  const built = (import.meta as { env?: Record<string, string | undefined> }).env;
+  return runtime || built?.[name] || undefined;
 }

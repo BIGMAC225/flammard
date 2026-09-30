@@ -453,6 +453,10 @@ where strength = best
 group by key
 having count(distinct id) = 1;
 
+-- Background meeting analysis (2026-09-30)
+alter table meetings add column if not exists analysis_started_at timestamptz;
+alter table meetings add column if not exists analysis_error text;
+
 -- ── Indexes ───────────────────────────────────────────────────────────────
 create index if not exists meetings_date_idx        on meetings(date desc);
 create index if not exists meetings_team_idx        on meetings(team);
