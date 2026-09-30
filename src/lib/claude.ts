@@ -126,10 +126,19 @@ async function nvidiaStructured<S extends z.ZodType>(schema: S, call: Structured
       err.status = res.status;
       throw err;
     }
-    const data = JSON.parse(text) as { choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }> };
+    const data = JSON.parse(text) as {
+      choices?: Array<{
+        message?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null };
+        finish_reason?: string;
+      }>;
+    };
     const choice = data.choices?.[0];
     if (choice?.finish_reason === 'length') throw new Error(`${call.label} was cut off (NVIDIA max_tokens ${maxTokens})`);
-    return choice?.message?.content ?? '';
+    // Reasoning models (Kimi K3) sometimes leave `content` empty and put the
+    // whole answer, JSON included, in `reasoning_content`
+    const content = choice?.message?.content ?? '';
+    if (content.trim()) return content;
+    return choice?.message?.reasoning_content ?? choice?.message?.reasoning ?? '';
   };
 
   const messages = [
@@ -161,7 +170,8 @@ async function nvidiaStructured<S extends z.ZodType>(schema: S, call: Structured
         .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
         .join('; ');
     } catch (err) {
-      problem = err instanceof Error ? err.message : 'invalid JSON';
+      const snippet = reply.trim().slice(0, 120).replace(/\s+/g, ' ');
+      problem = `${err instanceof Error ? err.message : 'invalid JSON'} (reply was ${reply.length} chars${snippet ? `: "${snippet}…"` : ''})`;
     }
     if (attempt === 0) {
       reply = await ask(
