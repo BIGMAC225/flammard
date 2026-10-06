@@ -12,6 +12,8 @@ const MODEL = 'claude-opus-5';
 //   Anthropic Claude when ANTHROPIC_API_KEY is set.
 // AI_PROVIDER=nvidia|anthropic picks one when both keys exist (default nvidia).
 // NVIDIA_MODEL overrides the model (default moonshotai/kimi-k3).
+// NVIDIA_BREAKDOWN_MODEL / ANTHROPIC_BREAKDOWN_MODEL override it for the
+// step breakdown only, which must answer inside a normal 60s page request.
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const NVIDIA_DEFAULT_MODEL = 'moonshotai/kimi-k3';
@@ -40,27 +42,78 @@ interface StructuredCall {
   effort: 'low' | 'medium';
   /** Used in error messages, e.g. "The analysis". */
   label: string;
+  /**
+   * Overrides the provider's model for this call (an id for whichever
+   * provider is active). Unset = the provider default.
+   */
+  model?: string;
+  /**
+   * Wall-clock limit for the whole call, every attempt and retry included.
+   * Set it for calls made inside a normal page request, which Netlify kills
+   * at 60s; leave it unset for calls in the background function.
+   */
+  deadlineMs?: number;
+  /** Shown when the deadline passes. */
+  timeoutMessage?: string;
 }
 
 async function structured<S extends z.ZodType>(schema: S, call: StructuredCall): Promise<z.infer<S>> {
   const provider = aiProvider();
   if (!provider) throw new Error('No AI key is configured: set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in Netlify');
 
-  if (provider === 'anthropic') {
-    const response = await client().messages.parse({
-      model: MODEL,
+  const run = (signal?: AbortSignal) =>
+    provider === 'anthropic' ? anthropicStructured(schema, call, signal) : nvidiaStructured(schema, call, signal);
+  if (!call.deadlineMs) return run();
+
+  // One deadline over everything: the SDK's timeout is per attempt and NVIDIA's
+  // path makes up to three requests, so neither bounds the total on its own.
+  const timeoutMessage = call.timeoutMessage ?? `${call.label} took too long. Try again.`;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(timeoutMessage));
+    }, call.deadlineMs);
+  });
+  try {
+    return await Promise.race([run(controller.signal), deadline]);
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error(timeoutMessage);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function anthropicStructured<S extends z.ZodType>(
+  schema: S,
+  call: StructuredCall,
+  signal?: AbortSignal
+): Promise<z.infer<S>> {
+  const model = call.model || MODEL;
+  // `create`, not `parse`: `parse` validates the JSON before stop_reason can be
+  // checked, so a cut-off answer would surface as a JSON syntax error
+  const format = zodOutputFormat(schema as any);
+  const response = await client().messages.create(
+    {
+      model,
       max_tokens: call.maxTokens,
-      output_config: { effort: call.effort, format: zodOutputFormat(schema as any) },
+      // Haiku 4.5 rejects `effort`
+      output_config: { ...(model.startsWith('claude-haiku') ? {} : { effort: call.effort }), format },
       system: call.system,
       messages: [{ role: 'user', content: call.user }],
-    });
-    if (response.stop_reason === 'refusal') throw new Error(`${call.label} was declined by the model`);
-    const parsed = response.parsed_output as z.infer<S> | null;
-    if (!parsed) throw new Error(`Could not parse ${call.label.toLowerCase()}`);
-    return parsed;
+    },
+    // With a deadline, one retry at most: the deadline is the real bound
+    signal ? { signal, maxRetries: 1 } : undefined
+  );
+  if (response.stop_reason === 'refusal') throw new Error(`${call.label} was declined by the model`);
+  if (response.stop_reason === 'max_tokens') {
+    throw new Error(`${call.label} was cut off (Claude max_tokens ${call.maxTokens})`);
   }
-
-  return nvidiaStructured(schema, call);
+  const text = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text;
+  if (!text) throw new Error(`Could not parse ${call.label.toLowerCase()}`);
+  return format.parse(text) as z.infer<S>;
 }
 
 /**
@@ -95,9 +148,13 @@ function extractJson(text: string): unknown {
   throw new Error('no JSON object in the reply');
 }
 
-async function nvidiaStructured<S extends z.ZodType>(schema: S, call: StructuredCall): Promise<z.infer<S>> {
+async function nvidiaStructured<S extends z.ZodType>(
+  schema: S,
+  call: StructuredCall,
+  signal?: AbortSignal
+): Promise<z.infer<S>> {
   const key = env('NVIDIA_API_KEY')!;
-  const model = env('NVIDIA_MODEL') || NVIDIA_DEFAULT_MODEL;
+  const model = call.model || env('NVIDIA_MODEL') || NVIDIA_DEFAULT_MODEL;
   const jsonSchema = z.toJSONSchema(schema);
   const system =
     `${call.system}\n\nReply with ONE JSON object and nothing else (no prose, no code fences). ` +
@@ -118,7 +175,7 @@ async function nvidiaStructured<S extends z.ZodType>(schema: S, call: Structured
         stream: false,
         ...(guided ? { temperature: 0.1, nvext: { guided_json: jsonSchema } } : {}),
       }),
-      signal: AbortSignal.timeout(180_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
     });
     const text = await res.text();
     if (!res.ok) {
@@ -331,7 +388,9 @@ export async function breakDownItem(
   detail: 1 | 2 | 3,
   note: string | null
 ): Promise<ProposedStep[]> {
-  const system = `You help a CPA firm's leadership and management teams turn EOS ${item.kind}s into concrete next steps. The firm does tax, accounting and advisory work. Write steps as short imperative sentences that the owner could start on today, in the order they should happen. Don't pad; don't restate the item as a step.`;
+  const system = `You help a CPA firm's leadership and management teams turn EOS ${item.kind}s into concrete next steps. The firm does tax, accounting and advisory work. Write steps as short imperative sentences that the owner could start on today, in the order they should happen. Don't pad; don't restate the item as a step.
+
+Thinking adds latency and should only be used when it will meaningfully improve answer quality. When in doubt, respond directly.`;
 
   const lines = [
     `${item.kind[0].toUpperCase() + item.kind.slice(1)}: ${item.title}`,
@@ -347,7 +406,18 @@ export async function breakDownItem(
   ];
   const user = lines.filter(Boolean).join('\n');
 
-  const parsed = await structured(BreakdownSchema, { system, user, maxTokens: 4000, effort: 'low', label: 'The breakdown' });
+  // Runs inside the page request (Netlify kills it at 60s, DB reads included),
+  // so it gets a hard 45s budget and a message the owner can act on
+  const parsed = await structured(BreakdownSchema, {
+    system,
+    user,
+    maxTokens: 16000,
+    effort: 'low',
+    label: 'The breakdown',
+    model: env(aiProvider() === 'anthropic' ? 'ANTHROPIC_BREAKDOWN_MODEL' : 'NVIDIA_BREAKDOWN_MODEL')?.trim() || undefined,
+    deadlineMs: 45_000,
+    timeoutMessage: 'The AI took too long to answer (45s). Try again, or pick a lower level of detail.',
+  });
   return parsed.steps
     .map((s) => ({ title: s.title.trim(), substeps: s.substeps.map((x) => x.trim()).filter(Boolean) }))
     .filter((s) => s.title);
