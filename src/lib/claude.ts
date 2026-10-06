@@ -12,11 +12,15 @@ const MODEL = 'claude-opus-5';
 //   Anthropic Claude when ANTHROPIC_API_KEY is set.
 // AI_PROVIDER=nvidia|anthropic picks one when both keys exist (default nvidia).
 // NVIDIA_MODEL overrides the model (default moonshotai/kimi-k3).
-// NVIDIA_BREAKDOWN_MODEL / ANTHROPIC_BREAKDOWN_MODEL override it for the
-// step breakdown only, which must answer inside a normal 60s page request.
+// The step breakdown must answer inside a normal 60s page request, so it has
+// its own model: NVIDIA_BREAKDOWN_MODEL (default nemotron-3-super, below) or
+// ANTHROPIC_BREAKDOWN_MODEL (default the Claude model above).
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const NVIDIA_DEFAULT_MODEL = 'moonshotai/kimi-k3';
+// Kimi K3 took 163–250s per breakdown on the free API (2026-10-06); this one
+// took 3–16s at every detail level with schema-valid output.
+const NVIDIA_BREAKDOWN_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
 
 let _client: Anthropic | null = null;
 function client(): Anthropic {
@@ -148,6 +152,9 @@ function extractJson(text: string): unknown {
   throw new Error('no JSON object in the reply');
 }
 
+/** NVIDIA models that answered the guided request with a 400/422 (per warm instance). */
+const UNGUIDED_MODELS = new Set<string>();
+
 async function nvidiaStructured<S extends z.ZodType>(
   schema: S,
   call: StructuredCall,
@@ -161,9 +168,13 @@ async function nvidiaStructured<S extends z.ZodType>(
     `It must match this JSON Schema exactly; include every property, using null where a value is unknown:\n${JSON.stringify(jsonSchema)}`;
   const maxTokens = Math.min(call.maxTokens, Number(env('NVIDIA_MAX_TOKENS')) || 8192);
 
-  // `guided` = the first try: low temperature plus constrained JSON decoding.
-  // Some hosted models reject either (fixed sampling, no nvext), so a 400/422
-  // falls back to a bare request with only the prompt's JSON instructions.
+  // `guided` = the first try: low temperature plus constrained JSON decoding
+  // through the OpenAI-standard `response_format`. (The older
+  // `nvext.guided_json` is rejected as an unknown field by most hosted models,
+  // and the 400 can take as long as a full answer to come back.) A model that
+  // still rejects it gets a 400/422, falls back to a bare request with only
+  // the prompt's JSON instructions, and is remembered so later calls in this
+  // instance skip the wasted round trip.
   const ask = async (messages: Array<{ role: string; content: string }>, guided: boolean) => {
     const res = await fetch(NVIDIA_URL, {
       method: 'POST',
@@ -173,7 +184,9 @@ async function nvidiaStructured<S extends z.ZodType>(
         messages,
         max_tokens: maxTokens,
         stream: false,
-        ...(guided ? { temperature: 0.1, nvext: { guided_json: jsonSchema } } : {}),
+        ...(guided
+          ? { temperature: 0.1, response_format: { type: 'json_schema', json_schema: { name: 'reply', schema: jsonSchema } } }
+          : {}),
       }),
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
     });
@@ -203,13 +216,14 @@ async function nvidiaStructured<S extends z.ZodType>(
     { role: 'user', content: call.user },
   ];
 
-  let guided = true;
+  let guided = !UNGUIDED_MODELS.has(model);
   let reply: string;
   try {
     reply = await ask(messages, guided);
   } catch (err) {
-    // Some hosted models reject nvext; fall back to plain JSON prompting
-    if ((err as { status?: number }).status === 400 || (err as { status?: number }).status === 422) {
+    // Some hosted models reject response_format or temperature; fall back to plain JSON prompting
+    if (guided && ((err as { status?: number }).status === 400 || (err as { status?: number }).status === 422)) {
+      UNGUIDED_MODELS.add(model);
       guided = false;
       reply = await ask(messages, guided);
     } else {
@@ -414,7 +428,10 @@ Thinking adds latency and should only be used when it will meaningfully improve 
     maxTokens: 16000,
     effort: 'low',
     label: 'The breakdown',
-    model: env(aiProvider() === 'anthropic' ? 'ANTHROPIC_BREAKDOWN_MODEL' : 'NVIDIA_BREAKDOWN_MODEL')?.trim() || undefined,
+    model:
+      aiProvider() === 'anthropic'
+        ? env('ANTHROPIC_BREAKDOWN_MODEL')?.trim() || undefined
+        : env('NVIDIA_BREAKDOWN_MODEL')?.trim() || NVIDIA_BREAKDOWN_DEFAULT_MODEL,
     deadlineMs: 45_000,
     timeoutMessage: 'The AI took too long to answer (45s). Try again, or pick a lower level of detail.',
   });
