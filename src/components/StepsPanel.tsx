@@ -17,6 +17,16 @@ const DETAIL_LABELS: Record<1 | 2 | 3, string> = {
   3: 'Detailed — a full checklist',
 };
 
+/** Readable message for a failed response, whatever its body (JSON, HTML or empty). */
+async function failureMessage(res: Response, fallback: string): Promise<string> {
+  const json = await res.json().catch(() => null);
+  if (json && typeof json.error === 'string') return json.error;
+  return `${fallback} (server responded ${res.status}${res.statusText ? ` ${res.statusText}` : ''})`;
+}
+
+const SERVER_TIMEOUT =
+  'The server ran out of time before the AI finished. Try again, or pick a lower level of detail.';
+
 /**
  * Breaks a to-do, issue or rock into steps and sub-steps: a checklist you
  * add to by hand or let Claude propose (reviewed before saving).
@@ -46,9 +56,8 @@ export default function StepsPanel({ type, parentId, parentTitle, initialSteps, 
       headers: { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json.error ?? 'Request failed');
-    return json;
+    if (!res.ok) throw new Error(await failureMessage(res, 'Request failed'));
+    return res.json().catch(() => ({}));
   };
 
   const toggle = async (step: Step) => {
@@ -116,9 +125,11 @@ export default function StepsPanel({ type, parentId, parentTitle, initialSteps, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, id: parentId, detail, note: note.trim() || undefined }),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Breakdown failed');
+      if (!res.ok) throw new Error(await failureMessage(res, 'Breakdown failed'));
       const json = await readStreamedJSON<{ steps: ProposedStep[] }>(res);
-      if (json.error || !json.steps) throw new Error(json.error ?? 'Breakdown failed');
+      if (json.error) throw new Error(json.error);
+      if (json.truncated) throw new Error(SERVER_TIMEOUT);
+      if (!json.steps) throw new Error('Breakdown failed: the server sent no steps');
       setProposal(json.steps);
       setPicked(json.steps.map((s) => [true, ...s.substeps.map(() => true)]));
     } catch (err) {

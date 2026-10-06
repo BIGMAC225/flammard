@@ -12,9 +12,15 @@ const MODEL = 'claude-opus-5';
 //   Anthropic Claude when ANTHROPIC_API_KEY is set.
 // AI_PROVIDER=nvidia|anthropic picks one when both keys exist (default nvidia).
 // NVIDIA_MODEL overrides the model (default moonshotai/kimi-k3).
+// The step breakdown must answer inside a normal 60s page request, so it has
+// its own model: NVIDIA_BREAKDOWN_MODEL (default nemotron-3-super, below) or
+// ANTHROPIC_BREAKDOWN_MODEL (default the Claude model above).
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const NVIDIA_DEFAULT_MODEL = 'moonshotai/kimi-k3';
+// Kimi K3 took 163–250s per breakdown on the free API (2026-10-06); this one
+// took 3–16s at every detail level with schema-valid output.
+const NVIDIA_BREAKDOWN_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
 
 let _client: Anthropic | null = null;
 function client(): Anthropic {
@@ -40,27 +46,78 @@ interface StructuredCall {
   effort: 'low' | 'medium';
   /** Used in error messages, e.g. "The analysis". */
   label: string;
+  /**
+   * Overrides the provider's model for this call (an id for whichever
+   * provider is active). Unset = the provider default.
+   */
+  model?: string;
+  /**
+   * Wall-clock limit for the whole call, every attempt and retry included.
+   * Set it for calls made inside a normal page request, which Netlify kills
+   * at 60s; leave it unset for calls in the background function.
+   */
+  deadlineMs?: number;
+  /** Shown when the deadline passes. */
+  timeoutMessage?: string;
 }
 
 async function structured<S extends z.ZodType>(schema: S, call: StructuredCall): Promise<z.infer<S>> {
   const provider = aiProvider();
   if (!provider) throw new Error('No AI key is configured: set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in Netlify');
 
-  if (provider === 'anthropic') {
-    const response = await client().messages.parse({
-      model: MODEL,
+  const run = (signal?: AbortSignal) =>
+    provider === 'anthropic' ? anthropicStructured(schema, call, signal) : nvidiaStructured(schema, call, signal);
+  if (!call.deadlineMs) return run();
+
+  // One deadline over everything: the SDK's timeout is per attempt and NVIDIA's
+  // path makes up to three requests, so neither bounds the total on its own.
+  const timeoutMessage = call.timeoutMessage ?? `${call.label} took too long. Try again.`;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(timeoutMessage));
+    }, call.deadlineMs);
+  });
+  try {
+    return await Promise.race([run(controller.signal), deadline]);
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error(timeoutMessage);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function anthropicStructured<S extends z.ZodType>(
+  schema: S,
+  call: StructuredCall,
+  signal?: AbortSignal
+): Promise<z.infer<S>> {
+  const model = call.model || MODEL;
+  // `create`, not `parse`: `parse` validates the JSON before stop_reason can be
+  // checked, so a cut-off answer would surface as a JSON syntax error
+  const format = zodOutputFormat(schema as any);
+  const response = await client().messages.create(
+    {
+      model,
       max_tokens: call.maxTokens,
-      output_config: { effort: call.effort, format: zodOutputFormat(schema as any) },
+      // Haiku 4.5 rejects `effort`
+      output_config: { ...(model.startsWith('claude-haiku') ? {} : { effort: call.effort }), format },
       system: call.system,
       messages: [{ role: 'user', content: call.user }],
-    });
-    if (response.stop_reason === 'refusal') throw new Error(`${call.label} was declined by the model`);
-    const parsed = response.parsed_output as z.infer<S> | null;
-    if (!parsed) throw new Error(`Could not parse ${call.label.toLowerCase()}`);
-    return parsed;
+    },
+    // With a deadline, one retry at most: the deadline is the real bound
+    signal ? { signal, maxRetries: 1 } : undefined
+  );
+  if (response.stop_reason === 'refusal') throw new Error(`${call.label} was declined by the model`);
+  if (response.stop_reason === 'max_tokens') {
+    throw new Error(`${call.label} was cut off (Claude max_tokens ${call.maxTokens})`);
   }
-
-  return nvidiaStructured(schema, call);
+  const text = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text;
+  if (!text) throw new Error(`Could not parse ${call.label.toLowerCase()}`);
+  return format.parse(text) as z.infer<S>;
 }
 
 /**
@@ -95,18 +152,29 @@ function extractJson(text: string): unknown {
   throw new Error('no JSON object in the reply');
 }
 
-async function nvidiaStructured<S extends z.ZodType>(schema: S, call: StructuredCall): Promise<z.infer<S>> {
+/** NVIDIA models that answered the guided request with a 400/422 (per warm instance). */
+const UNGUIDED_MODELS = new Set<string>();
+
+async function nvidiaStructured<S extends z.ZodType>(
+  schema: S,
+  call: StructuredCall,
+  signal?: AbortSignal
+): Promise<z.infer<S>> {
   const key = env('NVIDIA_API_KEY')!;
-  const model = env('NVIDIA_MODEL') || NVIDIA_DEFAULT_MODEL;
+  const model = call.model || env('NVIDIA_MODEL') || NVIDIA_DEFAULT_MODEL;
   const jsonSchema = z.toJSONSchema(schema);
   const system =
     `${call.system}\n\nReply with ONE JSON object and nothing else (no prose, no code fences). ` +
     `It must match this JSON Schema exactly; include every property, using null where a value is unknown:\n${JSON.stringify(jsonSchema)}`;
   const maxTokens = Math.min(call.maxTokens, Number(env('NVIDIA_MAX_TOKENS')) || 8192);
 
-  // `guided` = the first try: low temperature plus constrained JSON decoding.
-  // Some hosted models reject either (fixed sampling, no nvext), so a 400/422
-  // falls back to a bare request with only the prompt's JSON instructions.
+  // `guided` = the first try: low temperature plus constrained JSON decoding
+  // through the OpenAI-standard `response_format`. (The older
+  // `nvext.guided_json` is rejected as an unknown field by most hosted models,
+  // and the 400 can take as long as a full answer to come back.) A model that
+  // still rejects it gets a 400/422, falls back to a bare request with only
+  // the prompt's JSON instructions, and is remembered so later calls in this
+  // instance skip the wasted round trip.
   const ask = async (messages: Array<{ role: string; content: string }>, guided: boolean) => {
     const res = await fetch(NVIDIA_URL, {
       method: 'POST',
@@ -116,9 +184,11 @@ async function nvidiaStructured<S extends z.ZodType>(schema: S, call: Structured
         messages,
         max_tokens: maxTokens,
         stream: false,
-        ...(guided ? { temperature: 0.1, nvext: { guided_json: jsonSchema } } : {}),
+        ...(guided
+          ? { temperature: 0.1, response_format: { type: 'json_schema', json_schema: { name: 'reply', schema: jsonSchema } } }
+          : {}),
       }),
-      signal: AbortSignal.timeout(180_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
     });
     const text = await res.text();
     if (!res.ok) {
@@ -146,13 +216,14 @@ async function nvidiaStructured<S extends z.ZodType>(schema: S, call: Structured
     { role: 'user', content: call.user },
   ];
 
-  let guided = true;
+  let guided = !UNGUIDED_MODELS.has(model);
   let reply: string;
   try {
     reply = await ask(messages, guided);
   } catch (err) {
-    // Some hosted models reject nvext; fall back to plain JSON prompting
-    if ((err as { status?: number }).status === 400 || (err as { status?: number }).status === 422) {
+    // Some hosted models reject response_format or temperature; fall back to plain JSON prompting
+    if (guided && ((err as { status?: number }).status === 400 || (err as { status?: number }).status === 422)) {
+      UNGUIDED_MODELS.add(model);
       guided = false;
       reply = await ask(messages, guided);
     } else {
@@ -331,7 +402,9 @@ export async function breakDownItem(
   detail: 1 | 2 | 3,
   note: string | null
 ): Promise<ProposedStep[]> {
-  const system = `You help a CPA firm's leadership and management teams turn EOS ${item.kind}s into concrete next steps. The firm does tax, accounting and advisory work. Write steps as short imperative sentences that the owner could start on today, in the order they should happen. Don't pad; don't restate the item as a step.`;
+  const system = `You help a CPA firm's leadership and management teams turn EOS ${item.kind}s into concrete next steps. The firm does tax, accounting and advisory work. Write steps as short imperative sentences that the owner could start on today, in the order they should happen. Don't pad; don't restate the item as a step.
+
+Thinking adds latency and should only be used when it will meaningfully improve answer quality. When in doubt, respond directly.`;
 
   const lines = [
     `${item.kind[0].toUpperCase() + item.kind.slice(1)}: ${item.title}`,
@@ -347,7 +420,21 @@ export async function breakDownItem(
   ];
   const user = lines.filter(Boolean).join('\n');
 
-  const parsed = await structured(BreakdownSchema, { system, user, maxTokens: 4000, effort: 'low', label: 'The breakdown' });
+  // Runs inside the page request (Netlify kills it at 60s, DB reads included),
+  // so it gets a hard 45s budget and a message the owner can act on
+  const parsed = await structured(BreakdownSchema, {
+    system,
+    user,
+    maxTokens: 16000,
+    effort: 'low',
+    label: 'The breakdown',
+    model:
+      aiProvider() === 'anthropic'
+        ? env('ANTHROPIC_BREAKDOWN_MODEL')?.trim() || undefined
+        : env('NVIDIA_BREAKDOWN_MODEL')?.trim() || NVIDIA_BREAKDOWN_DEFAULT_MODEL,
+    deadlineMs: 45_000,
+    timeoutMessage: 'The AI took too long to answer (45s). Try again, or pick a lower level of detail.',
+  });
   return parsed.steps
     .map((s) => ({ title: s.title.trim(), substeps: s.substeps.map((x) => x.trim()).filter(Boolean) }))
     .filter((s) => s.title);
