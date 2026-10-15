@@ -169,21 +169,28 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
         values (${id}, ${team}, ${i.title}, ${i.description}, ${i.priority}, 'open', 'analysis', 'short',
           (select coalesce(max(rank), 0) + 1 from issues where team = ${team} and horizon = 'short'))`
     ),
+    // The same rule as PATCH /api/issues/[id]: solved needs a resolution note
+    // or a to-do linked to the issue. A blank resolution can only close an
+    // existing issue that already has a linked to-do; it never creates one.
     ...a.issues_solved.map((i) => {
       const issueId = isUuid(i.issue_id) ? i.issue_id : null;
+      const resolution = typeof i.resolution === 'string' && i.resolution.trim() ? i.resolution.trim() : null;
       return db`
         with solved as (
-          update issues set status = 'solved', resolution = ${i.resolution}, resolved_in_meeting_id = ${id}, solved_at = now(), updated_at = now()
+          update issues set status = 'solved', resolution = coalesce(${resolution}::text, resolution), resolved_in_meeting_id = ${id},
+            solved_at = now(), updated_at = now()
           where id = (
-            select id from issues
-            where team = ${team} and meeting_id is distinct from ${id} and status = 'open'
-              and (id = ${issueId}::uuid or (${issueId}::uuid is null and lower(title) = lower(${i.title})))
+            select x.id from issues x
+            where x.team = ${team} and x.meeting_id is distinct from ${id} and x.status = 'open'
+              and (x.id = ${issueId}::uuid or (${issueId}::uuid is null and lower(x.title) = lower(${i.title})))
+              and (${resolution}::text is not null or nullif(btrim(x.resolution), '') is not null
+                   or exists (select 1 from todos t where t.issue_id = x.id))
             limit 1
           ) returning id
         )
         insert into issues (meeting_id, team, title, resolution, status, resolved_in_meeting_id, solved_at, priority, source)
-        select ${id}, ${team}, ${i.title}, ${i.resolution}, 'solved', ${id}, now(), 'medium', 'analysis'
-        where not exists (select 1 from solved)`;
+        select ${id}, ${team}, ${i.title}, ${resolution}, 'solved', ${id}, now(), 'medium', 'analysis'
+        where ${resolution}::text is not null and not exists (select 1 from solved)`;
     }),
 
     // ── Meeting metadata ────────────────────────────────────────────────

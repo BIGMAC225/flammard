@@ -23,7 +23,7 @@ const SECTIONS: Array<{ key: ListKey; label: string; hint: string }> = [
   { key: 'rocks', label: 'Rock updates', hint: 'Status as reported in the meeting' },
   { key: 'todos_reviewed', label: 'Reviewed to-dos', hint: 'Previous to-dos that were closed out' },
   { key: 'todos_new', label: 'New to-dos', hint: '7-day action items' },
-  { key: 'issues_solved', label: 'Solved issues', hint: 'IDS items resolved' },
+  { key: 'issues_solved', label: 'Solved issues', hint: 'IDS items resolved; each needs a resolution' },
   { key: 'issues_new', label: 'New issues', hint: 'Added to the issues list' },
   { key: 'decisions', label: 'Decisions', hint: 'Go into the minutes' },
   { key: 'actions', label: 'Action items', hint: 'Longer follow-ups: go into the minutes and onto the to-do list with their date' },
@@ -56,16 +56,30 @@ function describe(key: ListKey, item: any): { title: string; meta: string[] } {
 }
 
 export default function AnalysisReview({ analysis, committing, onCommit }: Props) {
-  // Everything starts checked; unchecking drops the item from the commit.
+  // A solved issue needs a resolution (EOS: solved means a resolution and
+  // usually a to-do). The text is editable here; blank means it can't be accepted.
+  const [resolutions, setResolutions] = useState<string[]>(() => analysis.issues_solved.map((i) => i.resolution ?? ''));
+  const hasResolution = (i: number) => resolutions[i]?.trim().length > 0;
+
+  // Everything starts checked (a solved issue only when it has a resolution);
+  // unchecking drops the item from the commit.
   const [checked, setChecked] = useState<Record<ListKey, boolean[]>>(() =>
-    Object.fromEntries(SECTIONS.map((s) => [s.key, analysis[s.key].map(() => true)])) as Record<ListKey, boolean[]>
+    Object.fromEntries(
+      SECTIONS.map((s) => [s.key, analysis[s.key].map((item: any) => (s.key === 'issues_solved' ? !!item.resolution?.trim() : true))])
+    ) as Record<ListKey, boolean[]>
   );
 
   const toggle = (key: ListKey, i: number) =>
     setChecked((c) => ({ ...c, [key]: c[key].map((v, j) => (j === i ? !v : v)) }));
 
   const toggleAll = (key: ListKey, value: boolean) =>
-    setChecked((c) => ({ ...c, [key]: c[key].map(() => value) }));
+    setChecked((c) => ({ ...c, [key]: c[key].map((_, i) => value && (key !== 'issues_solved' || hasResolution(i))) }));
+
+  const setResolution = (i: number, text: string) => {
+    setResolutions((r) => r.map((v, j) => (j === i ? text : v)));
+    // Blanking the resolution unchecks the item; it can't be accepted without one
+    if (!text.trim()) setChecked((c) => ({ ...c, issues_solved: c.issues_solved.map((v, j) => (j === i ? false : v)) }));
+  };
 
   const selectedCount = useMemo(
     () => Object.values(checked).reduce((n, list) => n + list.filter(Boolean).length, 0),
@@ -75,8 +89,11 @@ export default function AnalysisReview({ analysis, committing, onCommit }: Props
   const commit = () => {
     const selected = { ...analysis } as MeetingAnalysis;
     for (const { key } of SECTIONS) {
-      (selected as any)[key] = analysis[key].filter((_, i) => checked[key][i]);
+      (selected as any)[key] = analysis[key].filter((_, i) => checked[key][i] && (key !== 'issues_solved' || hasResolution(i)));
     }
+    selected.issues_solved = analysis.issues_solved
+      .map((item, i) => ({ ...item, resolution: resolutions[i].trim() }))
+      .filter((item, i) => checked.issues_solved[i] && item.resolution);
     onCommit(selected);
   };
 
@@ -115,7 +132,9 @@ export default function AnalysisReview({ analysis, committing, onCommit }: Props
             <div className="border border-line rounded-xl overflow-hidden">
               {items.map((item, i) => {
                 const { title, meta } = describe(key, item);
-                const on = checked[key][i];
+                const solvedIssue = key === 'issues_solved';
+                const blocked = solvedIssue && !hasResolution(i);
+                const on = checked[key][i] && !blocked;
                 return (
                   <label
                     key={i}
@@ -126,13 +145,26 @@ export default function AnalysisReview({ analysis, committing, onCommit }: Props
                     <input
                       type="checkbox"
                       checked={on}
+                      disabled={blocked}
                       onChange={() => toggle(key, i)}
                       className="mt-1 accent-current"
+                      title={blocked ? 'Write the resolution to accept this' : undefined}
                     />
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm text-ink-primary">{title}</p>
-                      {meta.filter(Boolean).length > 0 && (
-                        <p className="text-xs text-ink-muted mt-0.5">{meta.filter(Boolean).join(' · ')}</p>
+                      {solvedIssue ? (
+                        <input
+                          className={`input text-xs mt-1 py-1 ${blocked ? 'border-state-warning' : ''}`}
+                          placeholder="Resolution (required to accept)"
+                          value={resolutions[i]}
+                          onClick={(e) => e.preventDefault()}
+                          onChange={(e) => setResolution(i, e.target.value)}
+                          aria-label={`Resolution of ${title}`}
+                        />
+                      ) : (
+                        meta.filter(Boolean).length > 0 && (
+                          <p className="text-xs text-ink-muted mt-0.5">{meta.filter(Boolean).join(' · ')}</p>
+                        )
                       )}
                     </div>
                   </label>
