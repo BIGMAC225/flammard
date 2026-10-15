@@ -488,6 +488,15 @@ create table if not exists cascading_messages (
 );
 create index if not exists cascading_messages_meeting_idx on cascading_messages(meeting_id, sort_order);
 
+-- Which closes the transcript analysis made, so accepting an analysis again
+-- undoes only its own work: a to-do or issue a person closed on the meeting
+-- page stays closed. analysis_resolution is the text the analysis wrote
+-- (null when it kept an existing resolution), so undo never nulls a
+-- resolution a person typed.
+alter table todos  add column if not exists closed_by_analysis boolean not null default false;
+alter table issues add column if not exists closed_by_analysis boolean not null default false;
+alter table issues add column if not exists analysis_resolution text;
+
 -- Which meeting carried a rock review / closed a to-do or issue
 create index if not exists meeting_rocks_rock_idx       on meeting_rocks(rock_id) where rock_id is not null;
 create index if not exists todos_resolved_meeting_idx   on todos(resolved_meeting_id) where resolved_meeting_id is not null;
