@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import OwnerPicker, { type OwnerValue } from './OwnerPicker';
-import type { MeetingRock, PersonOption, RockStatus, TeamId } from '../types';
+import type { MeetingRock, PersonOption, Rock, RockStatus, TeamId } from '../types';
+
+// The meeting's Rock review. The list is carried over from the team's active
+// rocks when the meeting is created (company rocks first, then by owner);
+// each is reviewed as on track or off track only. Setting a status here is
+// written through to the team rock, so next week's meeting carries it over
+// as reviewed.
 
 // A rock reviewed in a meeting is never merely "planned"
 type ReviewStatus = Exclude<RockStatus, 'planned'>;
@@ -11,6 +17,8 @@ interface RocksPanelProps {
   team?: TeamId;
   /** Server-rendered picker list (including inactive people). */
   people?: PersonOption[];
+  /** The team's rocks that can be added to the review (active or planned). */
+  teamRocks?: Pick<Rock, 'id' | 'title' | 'owner' | 'status' | 'level'>[];
 }
 
 const UNASSIGNED: OwnerValue = { owner_id: null, owner: null };
@@ -29,14 +37,24 @@ const STATUS_COLORS: Record<ReviewStatus, string> = {
   dropped: 'bg-bg-elevated text-ink-muted border-line',
 };
 
-export default function RocksPanel({ meetingId, initialRocks, team, people }: RocksPanelProps) {
+const NEW_ROCK = '__new__';
+
+export default function RocksPanel({ meetingId, initialRocks, team, people, teamRocks = [] }: RocksPanelProps) {
   const [rocks, setRocks] = useState<MeetingRock[]>(initialRocks);
   const [adding, setAdding] = useState(false);
+  const [pick, setPick] = useState<string>('');
   const [newTitle, setNewTitle] = useState('');
   const [newOwner, setNewOwner] = useState<OwnerValue>(UNASSIGNED);
   const [newStatus, setNewStatus] = useState<RockStatus>('on_track');
   const [saving, setSaving] = useState(false);
+  const [carrying, setCarrying] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const onList = new Set(rocks.map((r) => r.rock_id).filter(Boolean));
+  const addable = teamRocks.filter((r) => !onList.has(r.id));
+  const onTrack = rocks.filter((r) => r.status === 'on_track').length;
+  const offTrack = rocks.filter((r) => r.status === 'off_track').length;
 
   const updateStatus = async (rock: MeetingRock, status: RockStatus) => {
     const prev = rocks;
@@ -50,22 +68,40 @@ export default function RocksPanel({ meetingId, initialRocks, team, people }: Ro
   };
 
   const addRock = async () => {
-    if (!newTitle.trim()) return;
+    const existing = pick && pick !== NEW_ROCK ? pick : null;
+    if (!existing && !newTitle.trim()) return;
     setSaving(true);
     setError('');
+    const body = existing
+      ? { rock_id: existing, status: newStatus }
+      : { title: newTitle.trim(), owner_id: newOwner.owner_id, owner: newOwner.owner, status: newStatus };
     const res = await fetch(`/api/meetings/${meetingId}/rocks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle.trim(), owner_id: newOwner.owner_id, owner: newOwner.owner, status: newStatus }),
+      body: JSON.stringify(body),
     });
     const json = await res.json();
     setSaving(false);
     if (!res.ok) { setError(json.error ?? 'Failed to add rock'); return; }
-    setRocks((r) => [...r, json.rock]);
+    if (!json.existed) setRocks((r) => [...r, json.rock]);
+    setPick('');
     setNewTitle('');
     setNewOwner(UNASSIGNED);
     setNewStatus('on_track');
     setAdding(false);
+  };
+
+  /** Brings in active team rocks that aren't on this meeting's list yet. */
+  const carryOver = async () => {
+    setCarrying(true);
+    setError('');
+    setNotice('');
+    const res = await fetch(`/api/meetings/${meetingId}/rocks`, { method: 'PUT' });
+    const json = await res.json().catch(() => ({}));
+    setCarrying(false);
+    if (!res.ok) { setError(json.error ?? 'Could not carry rocks over'); return; }
+    setRocks(json.rocks ?? rocks);
+    setNotice(json.added ? `${json.added} rock${json.added === 1 ? '' : 's'} carried over.` : 'Every active rock is already on the list.');
   };
 
   const removeRock = async (id: string) => {
@@ -77,8 +113,22 @@ export default function RocksPanel({ meetingId, initialRocks, team, people }: Ro
 
   return (
     <div className="space-y-3">
+      {rocks.length > 0 && (
+        <p className="text-xs text-ink-muted">
+          <span className="text-state-success font-medium">{onTrack} on track</span>
+          {' · '}
+          <span className={offTrack ? 'text-state-danger font-medium' : ''}>{offTrack} off track</span>
+          {offTrack > 0 && ' — off-track rocks go to the Issues List, no discussion here.'}
+        </p>
+      )}
+
       {rocks.length === 0 && !adding && (
-        <p className="text-sm text-ink-muted py-4 text-center">No rocks recorded for this meeting.</p>
+        <div className="text-sm text-ink-muted py-4 text-center space-y-2">
+          <p>No rocks on this meeting's list yet.</p>
+          <button onClick={carryOver} disabled={carrying} className="btn-secondary text-sm">
+            {carrying ? 'Carrying over…' : 'Carry over the team’s active rocks'}
+          </button>
+        </div>
       )}
 
       {rocks.map((rock) => (
@@ -94,12 +144,13 @@ export default function RocksPanel({ meetingId, initialRocks, team, people }: Ro
           </select>
           <div className="flex-1 min-w-0">
             <p className="text-sm text-ink-primary truncate">{rock.title}</p>
-            {rock.owner && <p className="text-xs text-ink-muted">{rock.owner}</p>}
+            <p className="text-xs text-ink-muted">{rock.owner ?? 'No owner'}</p>
           </div>
           <button
             onClick={() => removeRock(rock.id)}
             className="text-ink-muted hover:text-state-danger transition-colors flex-shrink-0 p-1"
-            aria-label="Remove rock"
+            aria-label="Remove rock from this meeting"
+            title="Remove from this meeting's review (the rock itself stays)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
@@ -110,20 +161,38 @@ export default function RocksPanel({ meetingId, initialRocks, team, people }: Ro
 
       {adding && (
         <div className="border border-line rounded-xl p-4 space-y-3 bg-bg-elevated">
-          <input
-            autoFocus
-            className="input text-sm"
-            placeholder="Rock title"
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') addRock(); if (e.key === 'Escape') setAdding(false); }}
-          />
+          {addable.length > 0 && (
+            <select autoFocus className="input text-sm" value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Which rock">
+              <option value="">Choose a rock…</option>
+              {addable.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.title}
+                  {r.owner ? ` — ${r.owner}` : ''}
+                  {r.status === 'planned' ? ' (planned)' : ''}
+                </option>
+              ))}
+              <option value={NEW_ROCK}>New rock…</option>
+            </select>
+          )}
+          {(addable.length === 0 || pick === NEW_ROCK) && (
+            <input
+              autoFocus={addable.length === 0}
+              className="input text-sm"
+              placeholder="Rock title"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') addRock(); if (e.key === 'Escape') setAdding(false); }}
+            />
+          )}
           <div className="flex gap-2">
-            <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} className="text-sm flex-1" />
+            {(addable.length === 0 || pick === NEW_ROCK) && (
+              <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} className="text-sm flex-1" />
+            )}
             <select
               className="input text-sm w-36"
               value={newStatus}
               onChange={(e) => setNewStatus(e.target.value as RockStatus)}
+              aria-label="Status"
             >
               {Object.entries(STATUS_LABELS).map(([v, l]) => (
                 <option key={v} value={v}>{l}</option>
@@ -143,15 +212,24 @@ export default function RocksPanel({ meetingId, initialRocks, team, people }: Ro
       )}
 
       {!adding && (
-        <button
-          onClick={() => setAdding(true)}
-          className="flex items-center gap-1.5 text-sm text-ink-secondary hover:text-ink-primary transition-colors"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-          Add rock
-        </button>
+        <div className="flex flex-wrap items-center gap-4">
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1.5 text-sm text-ink-secondary hover:text-ink-primary transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            Add rock
+          </button>
+          {rocks.length > 0 && (
+            <button onClick={carryOver} disabled={carrying} className="text-xs text-ink-muted hover:text-ink-primary transition-colors">
+              {carrying ? 'Carrying over…' : 'Carry over active rocks'}
+            </button>
+          )}
+          {notice && <span className="text-xs text-ink-muted">{notice}</span>}
+          {error && !adding && <span className="text-xs text-state-danger">{error}</span>}
+        </div>
       )}
     </div>
   );

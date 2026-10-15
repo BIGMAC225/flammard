@@ -286,6 +286,7 @@ const MeetingAnalysisSchema = z.object({
   ),
   rocks: z.array(
     z.object({
+      rock_id: z.string().nullable(),
       title: z.string(),
       owner: z.string().nullable(),
       status: z.enum(['on_track', 'off_track', 'complete', 'dropped']),
@@ -294,7 +295,7 @@ const MeetingAnalysisSchema = z.object({
   ),
   todos_new: z.array(z.object({ title: z.string(), owner: z.string().nullable() })),
   todos_reviewed: z.array(
-    z.object({ title: z.string(), status: z.enum(['open', 'done', 'not_done', 'dropped']) })
+    z.object({ todo_id: z.string().nullable(), title: z.string(), status: z.enum(['open', 'done', 'not_done', 'dropped']) })
   ),
   issues_new: z.array(
     z.object({
@@ -303,7 +304,7 @@ const MeetingAnalysisSchema = z.object({
       priority: z.enum(['low', 'medium', 'high']),
     })
   ),
-  issues_solved: z.array(z.object({ title: z.string(), resolution: z.string().nullable() })),
+  issues_solved: z.array(z.object({ issue_id: z.string().nullable(), title: z.string(), resolution: z.string().nullable() })),
   meeting_rating: z.number().nullable(),
   conclude_notes: z.string().nullable(),
 });
@@ -314,22 +315,24 @@ export async function analyzeTranscript(
     title: string;
     date: string;
     attendees: string[];
-    openTodos: Array<{ title: string; owner: string | null }>;
-    openIssues: Array<{ title: string }>;
-    rocks: Array<{ title: string; owner: string | null; status: string }>;
+    openTodos: Array<{ id: string; title: string; owner: string | null }>;
+    openIssues: Array<{ id: string; title: string }>;
+    rocks: Array<{ id: string; title: string; owner: string | null; status: string }>;
   }
 ): Promise<MeetingAnalysis> {
   const system = `You turn transcripts of EOS Level 10 (L10) meetings into the team's official record. The transcript comes from speech-to-text, so names and numbers may be misheard — use the attendee list and the existing rocks, to-dos and issues to correct them when the intent is clear. Record only what was actually said; never invent items. Prefer fewer, well-phrased items over many fragments.`;
 
+  // Each existing item carries its id so the model can point at it exactly
+  // (the commit matches by id, never by title)
   const existing = [
     context.rocks.length
-      ? `Existing rocks:\n${context.rocks.map((r) => `- ${r.title} (${r.owner ?? 'no owner'}, ${r.status})`).join('\n')}`
+      ? `Existing rocks (id — title):\n${context.rocks.map((r) => `- ${r.id} — ${r.title} (${r.owner ?? 'no owner'}, ${r.status})`).join('\n')}`
       : '',
     context.openTodos.length
-      ? `Open to-dos from previous meetings:\n${context.openTodos.map((t) => `- ${t.title}${t.owner ? ` (${t.owner})` : ''}`).join('\n')}`
+      ? `Open to-dos from previous meetings (id — title):\n${context.openTodos.map((t) => `- ${t.id} — ${t.title}${t.owner ? ` (${t.owner})` : ''}`).join('\n')}`
       : '',
     context.openIssues.length
-      ? `Open issues:\n${context.openIssues.map((i) => `- ${i.title}`).join('\n')}`
+      ? `Open issues (id — title):\n${context.openIssues.map((i) => `- ${i.id} — ${i.title}`).join('\n')}`
       : '',
   ]
     .filter(Boolean)
@@ -347,10 +350,10 @@ How to fill each field:
 - actions: commitments that are not 7-day EOS to-dos (longer-running follow-ups). due_date as YYYY-MM-DD when stated.
 - discussion: one entry per topic discussed, with the positions taken.
 - headlines: customer/employee wins and good news from the segue.
-- rocks: every rock that was reviewed, with the status stated in the meeting. Use the existing rock's exact title when it is the same rock.
+- rocks: every rock that was reviewed, with the status stated in the meeting. When it is an existing rock, copy its id into rock_id and use its exact title; rock_id is null only for a rock that is genuinely new.
 - todos_new: 7-day to-dos created in this meeting.
-- todos_reviewed: previous to-dos that were reviewed, using the exact title from the open to-do list, with done / not_done / dropped.
-- issues_new: issues raised and not solved. issues_solved: issues that were solved (IDS), including previously open ones, with the resolution.
+- todos_reviewed: previous to-dos that were reviewed, with done / not_done / dropped. Copy the to-do's id into todo_id and use its exact title from the open to-do list.
+- issues_new: issues raised and not solved. issues_solved: issues that were solved (IDS), with the resolution. For a previously open issue copy its id into issue_id; issue_id is null for an issue raised and solved in the same meeting.
 - meeting_rating: the average rating given at the end, or null. conclude_notes: cascading messages and closing notes, or null.
 
 --- TRANSCRIPT ---

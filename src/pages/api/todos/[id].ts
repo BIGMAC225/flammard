@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { json, readBody, requireAuth, requireEnum, requireUuid } from '../../../lib/api';
+import { isUuid, json, readBody, requireAuth, requireEnum, requireUuid } from '../../../lib/api';
 import { isIsoDate } from '../../../lib/dates';
 import { buildUpdate, sql } from '../../../lib/db';
 import { resolveOwner } from '../../../lib/people';
@@ -31,13 +31,27 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
     if ('error' in owner) return json({ error: owner.error }, 400);
     Object.assign(body, owner);
   }
-  // Done stamps completed_at; any other status clears it
+  // The meeting a review happened in (the meeting page sends it with the status)
+  if ('resolved_meeting_id' in body && body.resolved_meeting_id !== null && !isUuid(body.resolved_meeting_id)) {
+    return json({ error: 'Invalid resolved_meeting_id' }, 400);
+  }
+  // Done stamps completed_at; any other status clears it. Reopening forgets
+  // which meeting closed it.
   const extra: Record<string, unknown> = { updated_at: new Date() };
-  if ('status' in body) extra.completed_at = body.status === 'done' ? new Date() : null;
+  if ('status' in body) {
+    extra.completed_at = body.status === 'done' ? new Date() : null;
+    if (body.status === 'open') body.resolved_meeting_id = null;
+  }
 
-  const update = buildUpdate('todos', params.id!, body, ['status', 'title', 'owner', 'owner_id', 'due_date', 'description'], extra);
+  const update = buildUpdate(
+    'todos',
+    params.id!,
+    body,
+    ['status', 'title', 'owner', 'owner_id', 'due_date', 'description', 'resolved_meeting_id'],
+    extra
+  );
   if (!update) return json({ error: 'Nothing to update' }, 400);
-  const rows = await sql().query(`${update.text}, due_date::text as due_date`, update.params);
+  const rows = await sql().query(`${update.text}, due_date::text as due_date, created_at::text as created_at`, update.params);
   if (!rows.length) return json({ error: 'Not found' }, 404);
   return json({ ok: true, todo: rows[0] });
 };
