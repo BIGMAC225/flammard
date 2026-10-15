@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import OwnerPicker, { type OwnerValue } from './OwnerPicker';
 import StepsPanel from './StepsPanel';
+import { ageInDays, plusDays, TODO_MAX_AGE_DAYS } from '../lib/todos';
 import type { PersonOption, Step, TeamId, Todo, TodoStatus } from '../types';
 
 export type BoardTodo = Todo & { meeting_title: string | null; meeting_date: string | null };
@@ -31,6 +32,8 @@ export default function TodosBoard({ initialTodos, stepsByTodo, team, people, de
   const [todos, setTodos] = useState<BoardTodo[]>(initialTodos);
   const [title, setTitle] = useState('');
   const [owner, setOwner] = useState<OwnerValue>(defaultOwner);
+  const today = new Date().toISOString().slice(0, 10);
+  const [dueDate, setDueDate] = useState(plusDays(today, 7));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [closedCount, setClosedCount] = useState(0);
@@ -41,9 +44,10 @@ export default function TodosBoard({ initialTodos, stepsByTodo, team, people, de
     setSaving(true);
     setError('');
     try {
-      const data = await send('/api/todos', 'POST', { title: title.trim(), owner_id: owner.owner_id, owner: owner.owner });
+      const data = await send('/api/todos', 'POST', { title: title.trim(), owner_id: owner.owner_id, owner: owner.owner, due_date: dueDate || null });
       setTodos((all) => [{ ...data.todo, meeting_title: null, meeting_date: null }, ...all]);
       setTitle('');
+      setDueDate(plusDays(today, 7));
       titleRef.current?.focus();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add the to-do');
@@ -75,6 +79,18 @@ export default function TodosBoard({ initialTodos, stepsByTodo, team, people, de
     } catch (err) {
       setTodos(prev);
       setError(err instanceof Error ? err.message : 'Could not change the owner');
+    }
+  };
+
+  const reschedule = async (todo: BoardTodo, due_date: string) => {
+    const prev = todos;
+    setTodos((all) => all.map((t) => (t.id === todo.id ? { ...t, due_date } : t)));
+    setError('');
+    try {
+      await send(`/api/todos/${todo.id}`, 'PATCH', { due_date });
+    } catch (err) {
+      setTodos(prev);
+      setError(err instanceof Error ? err.message : 'Could not change the due date');
     }
   };
 
@@ -112,6 +128,7 @@ export default function TodosBoard({ initialTodos, stepsByTodo, team, people, de
             className="text-sm sm:w-44"
             aria-label="Owner of the new to-do"
           />
+          <input type="date" className="input text-sm sm:w-40" value={dueDate} onChange={(e) => setDueDate(e.target.value)} aria-label="Due date" title="Due in 7 days by default" />
           <button onClick={add} disabled={saving || !title.trim()} className="btn-primary text-sm">
             {saving ? 'Adding…' : 'Add'}
           </button>
@@ -147,7 +164,22 @@ export default function TodosBoard({ initialTodos, stepsByTodo, team, people, de
                 title="Mark done"
               />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-ink-primary">{todo.title}</p>
+                <p className="text-sm font-medium text-ink-primary">
+                  {todo.title}
+                  {(() => {
+                    const age = ageInDays(String(todo.created_at), today);
+                    return (
+                      <span
+                        className={`ml-2 align-middle text-xs px-2 py-0.5 rounded-full font-normal tabular-nums ${
+                          age > TODO_MAX_AGE_DAYS ? 'bg-state-danger/15 text-state-danger' : 'bg-bg-elevated text-ink-muted'
+                        }`}
+                        title={age > TODO_MAX_AGE_DAYS ? `Over ${TODO_MAX_AGE_DAYS} days: make it an issue` : 'Days since it was added'}
+                      >
+                        {age}d
+                      </span>
+                    );
+                  })()}
+                </p>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5 text-xs">
                   <OwnerPicker
                     size="sm"
@@ -164,6 +196,16 @@ export default function TodosBoard({ initialTodos, stepsByTodo, team, people, de
                   ) : (
                     <span className="text-ink-muted">Added {String(todo.created_at).slice(0, 10)}</span>
                   )}
+                  <label className="text-ink-muted flex items-center gap-1">
+                    due
+                    <input
+                      type="date"
+                      defaultValue={todo.due_date ?? ''}
+                      onBlur={(e) => { if (e.target.value && e.target.value !== (todo.due_date ?? '')) reschedule(todo, e.target.value); }}
+                      className={`text-xs px-1.5 py-0.5 rounded-md border bg-transparent ${todo.due_date && todo.due_date < today ? 'border-state-danger/40 text-state-danger' : 'border-line text-ink-secondary'}`}
+                      aria-label={`Due date of ${todo.title}`}
+                    />
+                  </label>
                   <button onClick={() => close(todo, 'not_done')} className="text-ink-muted hover:text-state-danger">
                     Not done
                   </button>

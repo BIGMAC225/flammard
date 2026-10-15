@@ -117,6 +117,8 @@ export interface Rock {
   due_date: string | null;
   notes: string | null;
   level: RockLevel | null;
+  /** The quarter-end call: done or not done (null until made). */
+  outcome: 'done' | 'not_done' | null;
   completed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -146,11 +148,14 @@ export interface Todo {
   description: string | null;
   completed_at: string | null;
   resolved_meeting_id: string | null;
+  /** The issue this to-do came out of, if any. */
+  issue_id: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export type IssueHorizon = 'short' | 'long';
+export type IssueType = 'problem' | 'information' | 'idea';
 
 export interface Issue {
   id: string;
@@ -167,6 +172,10 @@ export interface Issue {
   resolution: string | null;
   resolved_in_meeting_id: string | null;
   solved_at: string | null;
+  issue_type: IssueType | null;
+  /** What it dropped from: an off-track rock or a headline. */
+  rock_id: string | null;
+  headline_id: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -26,7 +26,7 @@ const SECTIONS: Array<{ key: ListKey; label: string; hint: string }> = [
   { key: 'issues_solved', label: 'Solved issues', hint: 'IDS items resolved' },
   { key: 'issues_new', label: 'New issues', hint: 'Added to the issues list' },
   { key: 'decisions', label: 'Decisions', hint: 'Go into the minutes' },
-  { key: 'actions', label: 'Action items', hint: 'Longer-running follow-ups in the minutes' },
+  { key: 'actions', label: 'Action items', hint: 'Longer follow-ups: go into the minutes and onto the to-do list with their date' },
   { key: 'discussion', label: 'Discussion', hint: 'Topics covered, for the minutes' },
 ];
 

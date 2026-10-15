@@ -7,6 +7,9 @@ import { listPeopleOptions } from '../../lib/people';
 import { loadRoadmap } from '../../lib/roadmap';
 import { stepsForMany } from '../../lib/steps';
 import { currentTeam, teamLabel } from '../../lib/teams';
+import { quarterOf } from '../../lib/quarters';
+import { getSettings } from '../../lib/settings';
+import { todayLocal } from '../../lib/dates';
 import type { Period } from '../../types';
 
 const team = currentTeam(Astro.cookies);
@@ -15,7 +18,8 @@ const periodList: Period[] = periods.map(({ id, team, name, start_date, end_date
 
 // Steps for every rock that still shows a checklist (current and future periods)
 const liveRockIds = periods.filter((p) => p.when !== 'past').flatMap((p) => p.rocks.map((r) => r.id));
-const [stepsByRock, people] = await Promise.all([stepsForMany('rock', liveRockIds), listPeopleOptions(true)]);
+const [stepsByRock, people, settings] = await Promise.all([stepsForMany('rock', liveRockIds), listPeopleOptions(true), getSettings()]);
+const quarterEnd = quarterOf(todayLocal(), settings).end_date;
 
 // Group periods by the year they start in
 const years = [...new Set(periods.map((p) => p.start_date.slice(0, 4)))];
@@ -33,7 +37,7 @@ const STATUS_DOT: Record<string, string> = {
 const totalRocks = periods.reduce((n, p) => n + p.rocks.length, 0) + unplaced.length;
 ---
 
-<Dashboard eyebrow={teamLabel(team)} title="Roadmap" description="The multi-year plan: each period's rocks, and the steps under them.">
+<Dashboard eyebrow={teamLabel(team)} title="Roadmap" description="The multi-year plan: each period's rocks, and the steps under them. A planned rock is a candidate until the team adopts it at the quarterly session.">
   <div slot="actions" class="flex flex-wrap gap-2">
     <RoadmapImport client:load />
     <AddPeriod client:load />
@@ -83,7 +87,7 @@ const totalRocks = periods.reduce((n, p) => n + p.rocks.length, 0) + unplaced.le
                         )}
                         {r.notes && <p class="text-xs text-ink-secondary mt-1.5">{r.notes}</p>}
                         <div class="mt-2">
-                          <RockControls rockId={r.id} status={r.status} periodId={r.period_id} periods={periodList} owner={r.owner} ownerId={r.owner_id} team={team} people={people} client:visible />
+                          <RockControls rockId={r.id} title={r.title} status={r.status} periodId={r.period_id} periods={periodList} owner={r.owner} ownerId={r.owner_id} dueDate={r.due_date} level={r.level} team={team} people={people} quarterEnd={quarterEnd} client:visible />
                         </div>
                         {p.when !== 'past' && (
                           <StepsPanel type="rock" parentId={r.id} parentTitle={r.title} initialSteps={stepsByRock[r.id] ?? []} client:visible />
@@ -93,7 +97,7 @@ const totalRocks = periods.reduce((n, p) => n + p.rocks.length, 0) + unplaced.le
                   </div>
                 ))}
 
-                <AddRock periods={periodList} defaultPeriodId={p.id} team={team} people={people} client:visible />
+                <AddRock periods={periodList} defaultPeriodId={p.id} team={team} people={people} quarterEnd={p.end_date} client:visible />
               </div>
             ))}
           </div>
@@ -113,7 +117,7 @@ const totalRocks = periods.reduce((n, p) => n + p.rocks.length, 0) + unplaced.le
                     <p class="text-sm font-medium text-ink-primary">{r.title}</p>
                     {r.owner && <p class="text-xs text-ink-muted">{r.owner}</p>}
                     <div class="mt-2">
-                      <RockControls rockId={r.id} status={r.status} periodId={null} periods={periodList} owner={r.owner} ownerId={r.owner_id} team={team} people={people} client:visible />
+                      <RockControls rockId={r.id} title={r.title} status={r.status} periodId={null} periods={periodList} owner={r.owner} ownerId={r.owner_id} dueDate={r.due_date} level={r.level} team={team} people={people} quarterEnd={quarterEnd} client:visible />
                     </div>
                   </div>
                 </div>

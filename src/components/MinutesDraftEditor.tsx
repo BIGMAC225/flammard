@@ -91,9 +91,6 @@ export default function MinutesDraftEditor({
     setDecisions(decisions.filter((d) => d.id !== id));
 
   // ── Action helpers ─────────────────────────────────────
-  const addAction = () =>
-    setActions([...actions, { id: `a${nanoid()}`, text: '', status: 'open' }]);
-
   const updateAction = (id: string, patch: Partial<ActionItem>) =>
     setActions(actions.map((a) => (a.id === id ? { ...a, ...patch } : a)));
 
@@ -225,11 +222,17 @@ export default function MinutesDraftEditor({
         </div>
       )}
 
-      {/* Actions */}
+      {/* Actions: kept for the sealed record; the working list is To-Dos */}
       {tab === 'actions' && (
         <div className="space-y-3">
+          <p className="text-xs text-ink-muted p-3 rounded-xl bg-bg-elevated border border-line">
+            Action items now live on the to-do list, with a due date, so there is one list to review in the L10.
+            Add new ones in the meeting's To-Dos section or on the{' '}
+            <a href="/dashboard/todos" className="text-accent hover:text-accent-dim">To-Dos page</a>. The items below are
+            the copy kept in these minutes.
+          </p>
           {actions.length === 0 && (
-            <p className="text-sm text-ink-muted py-4 text-center">No action items recorded yet.</p>
+            <p className="text-sm text-ink-muted py-4 text-center">No action items in these minutes.</p>
           )}
           {actions.map((a) => (
             <div key={a.id} className="bg-bg-elevated border border-line rounded-xl p-4 space-y-3">
@@ -283,10 +286,8 @@ export default function MinutesDraftEditor({
               </div>
             </div>
           ))}
-          {!isSealed && (
-            <button onClick={addAction} className="btn-secondary text-sm w-full justify-center py-2.5">
-              + Add action item
-            </button>
+          {!isSealed && actions.length > 0 && (
+            <p className="text-xs text-ink-muted">Changes here update the minutes only, not the to-do list.</p>
           )}
         </div>
       )}

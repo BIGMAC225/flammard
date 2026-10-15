@@ -2,6 +2,10 @@ import { useState } from 'react';
 import OwnerPicker, { type OwnerValue } from './OwnerPicker';
 import type { Headline, HeadlineType, PersonOption, TeamId } from '../types';
 
+// Headlines: one sentence of customer or employee news, good or bad, with no
+// discussion. "Drop to IDS" turns a headline that needs discussion into a
+// short-term issue linked to it.
+
 interface HeadlinesPanelProps {
   meetingId: string;
   initialHeadlines: Headline[];
@@ -32,6 +36,7 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines, team, peop
   const [newType, setNewType] = useState<HeadlineType>('general');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [dropped, setDropped] = useState<Record<string, 'busy' | 'done' | 'existed'>>({});
 
   const addHeadline = async () => {
     if (!newText.trim()) return;
@@ -64,11 +69,29 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines, team, peop
     if (!res.ok) setHeadlines(prev);
   };
 
+  /** Needs discussion: becomes a short-term issue linked to the headline. */
+  const dropToIds = async (h: Headline) => {
+    setDropped((d) => ({ ...d, [h.id]: 'busy' }));
+    setError('');
+    const res = await fetch(`/api/meetings/${meetingId}/issues`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: h.text.slice(0, 500), headline_id: h.id, owner_id: h.presenter_id, owner: h.presenter, issue_type: 'problem' }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(json.error ?? 'Could not drop to IDS');
+      setDropped((d) => { const { [h.id]: _, ...rest } = d; return rest; });
+      return;
+    }
+    setDropped((d) => ({ ...d, [h.id]: json.existed ? 'existed' : 'done' }));
+  };
+
   const customer = headlines.filter((h) => h.type === 'customer');
   const employee = headlines.filter((h) => h.type === 'employee');
   const general = headlines.filter((h) => h.type === 'general');
 
-  const renderGroup = (items: Headline[], label: string, type: HeadlineType) => {
+  const renderGroup = (items: Headline[], label: string) => {
     if (items.length === 0) return null;
     return (
       <div>
@@ -81,7 +104,24 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines, team, peop
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-ink-primary">{h.text}</p>
-                {h.presenter && <p className="text-xs text-ink-muted mt-0.5">{h.presenter}</p>}
+                <p className="text-xs text-ink-muted mt-0.5">
+                  {h.presenter}
+                  {h.presenter && ' · '}
+                  {dropped[h.id] === 'done' ? (
+                    <span className="text-state-danger">On the Issues List</span>
+                  ) : dropped[h.id] === 'existed' ? (
+                    <span className="text-state-danger">Already on the Issues List</span>
+                  ) : (
+                    <button
+                      onClick={() => dropToIds(h)}
+                      disabled={dropped[h.id] === 'busy'}
+                      className="text-ink-muted hover:text-state-danger"
+                      title="Needs discussion: add it to the Issues List"
+                    >
+                      {dropped[h.id] === 'busy' ? 'Dropping…' : 'Drop to IDS'}
+                    </button>
+                  )}
+                </p>
               </div>
               <button
                 onClick={() => removeHeadline(h.id)}
@@ -101,13 +141,16 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines, team, peop
 
   return (
     <div className="space-y-4">
+      <p className="text-xs text-ink-muted">One sentence each, no discussion. If it needs talking about, drop it to IDS.</p>
       {headlines.length === 0 && !adding && (
         <p className="text-sm text-ink-muted py-4 text-center">No headlines for this meeting.</p>
       )}
 
-      {renderGroup(customer, 'Customer Wins', 'customer')}
-      {renderGroup(employee, 'Employee Wins', 'employee')}
-      {renderGroup(general, 'General', 'general')}
+      {renderGroup(customer, 'Customer')}
+      {renderGroup(employee, 'Employee')}
+      {renderGroup(general, 'General')}
+
+      {error && <p className="text-xs text-state-danger">{error}</p>}
 
       {adding && (
         <div className="border border-line rounded-xl p-4 space-y-3 bg-bg-elevated">
@@ -115,7 +158,7 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines, team, peop
             autoFocus
             className="input text-sm resize-none"
             rows={2}
-            placeholder="Headline text"
+            placeholder="One sentence: customer or employee news, good or bad"
             value={newText}
             onChange={(e) => setNewText(e.target.value)}
           />
@@ -138,7 +181,6 @@ export default function HeadlinesPanel({ meetingId, initialHeadlines, team, peop
               <option value="general">General</option>
             </select>
           </div>
-          {error && <p className="text-xs text-state-danger">{error}</p>}
           <div className="flex gap-2">
             <button onClick={addHeadline} disabled={saving} className="btn-primary text-sm">
               {saving ? 'Adding…' : 'Add headline'}

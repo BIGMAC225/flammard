@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import OwnerPicker, { type OwnerValue } from './OwnerPicker';
 import StepsPanel from './StepsPanel';
-import type { Issue, IssueHorizon, IssuePriority, PersonOption, Step, TeamId } from '../types';
+import type { Issue, IssueHorizon, IssuePriority, IssueType, PersonOption, Step, TeamId } from '../types';
 
 export type BoardIssue = Issue & { meeting_title: string | null; meeting_date: string | null };
 
@@ -17,7 +17,7 @@ interface Props {
 const UNASSIGNED: OwnerValue = { owner_id: null, owner: null };
 
 const TABS: Array<{ id: IssueHorizon; label: string; hint: string }> = [
-  { id: 'short', label: 'Short-term', hint: 'The IDS list: work these top-down in the L10.' },
+  { id: 'short', label: 'Short-term', hint: 'The IDS list: in the L10, pick the top three, then solve them in order 1, 2, 3.' },
   { id: 'long', label: 'Long-term', hint: 'Parked for later: review quarterly and move up when it is time.' },
 ];
 
@@ -27,6 +27,7 @@ const PRIORITY_STYLE: Record<IssuePriority, string> = {
   low: 'bg-bg-elevated text-ink-secondary border-line',
 };
 const PRIORITY_ORDER: Record<IssuePriority, number> = { high: 0, medium: 1, low: 2 };
+export const TYPE_LABELS: Record<IssueType, string> = { problem: 'Problem', information: 'Info', idea: 'Idea' };
 
 const byRank = (a: BoardIssue, b: BoardIssue) =>
   (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER) || String(a.created_at).localeCompare(String(b.created_at));
@@ -56,6 +57,7 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<IssuePriority>('medium');
+  const [issueType, setIssueType] = useState<IssueType | ''>('');
   const [owner, setOwner] = useState<OwnerValue>(UNASSIGNED);
   const [saving, setSaving] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -147,11 +149,13 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
         horizon: tab,
         owner_id: owner.owner_id,
         owner: owner.owner,
+        issue_type: issueType || null,
       });
       setIssues((all) => [...all, { ...data.issue, meeting_title: null, meeting_date: null }]);
       setTitle('');
       setDescription('');
       setPriority('medium');
+      setIssueType('');
       setOwner(UNASSIGNED);
       titleRef.current?.focus();
     } catch (err) {
@@ -162,7 +166,11 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
   };
 
   const solve = (issue: BoardIssue) => {
-    patch(issue, { status: 'solved', resolution: resolution.trim() || null });
+    if (!resolution.trim()) {
+      setError('To mark an issue solved, write the resolution (or add a to-do for it from the meeting page)');
+      return;
+    }
+    patch(issue, { status: 'solved', resolution: resolution.trim() });
     setSolvingId(null);
     setResolution('');
   };
@@ -252,6 +260,13 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
                 {p}
               </button>
             ))}
+            <span className="text-xs text-ink-muted ml-3">Type:</span>
+            <select value={issueType} onChange={(e) => setIssueType(e.target.value as IssueType | '')} className="text-xs px-2 py-1 rounded-full border border-line bg-transparent" aria-label="Issue type">
+              <option value="">not set</option>
+              <option value="problem">Problem</option>
+              <option value="information">Information</option>
+              <option value="idea">Idea</option>
+            </select>
             <span className="text-xs text-ink-muted ml-2">Added to the bottom of the {tab === 'short' ? 'short-term' : 'long-term'} list.</span>
           </div>
           <div className="flex gap-2">
@@ -334,7 +349,12 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
 
               {/* Body */}
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-ink-primary">{issue.title}</p>
+                <p className="text-sm font-medium text-ink-primary">
+                  {issue.title}
+                  {issue.issue_type && (
+                    <span className="ml-2 align-middle text-xs px-2 py-0.5 rounded-full bg-bg-elevated text-ink-muted font-normal">{TYPE_LABELS[issue.issue_type]}</span>
+                  )}
+                </p>
                 {issue.description && <p className="text-xs text-ink-muted mt-0.5">{issue.description}</p>}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
                   <OwnerPicker
@@ -382,7 +402,7 @@ export default function IssuesBoard({ initialIssues, stepsByIssue, initialTab = 
                     <input
                       autoFocus
                       className="input text-sm flex-1"
-                      placeholder="How was it solved? (optional)"
+                      placeholder="How was it solved? (required)"
                       value={resolution}
                       onChange={(e) => setResolution(e.target.value)}
                       onKeyDown={(e) => {

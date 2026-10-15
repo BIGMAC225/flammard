@@ -1,26 +1,59 @@
 ---
 import Dashboard from '../../layouts/Dashboard.astro';
 import StepsPanel from '../../components/StepsPanel';
-import { RockControls } from '../../components/RoadmapEditor';
+import { AddRock, RockControls } from '../../components/RoadmapEditor';
+import QuarterEndReview from '../../components/QuarterEndReview';
 import { listPeopleOptions } from '../../lib/people';
 import { many, sql } from '../../lib/db';
 import { stepsForMany } from '../../lib/steps';
-import { activateDueRocks } from '../../lib/roadmap';
 import { currentTeam, teamLabel } from '../../lib/teams';
+import { quarterOf } from '../../lib/quarters';
+import { ROCK_LIMIT_PER_QUARTER } from '../../lib/rocks';
+import { getSettings } from '../../lib/settings';
+import { todayLocal } from '../../lib/dates';
 import type { Period, Rock } from '../../types';
 
 const team = currentTeam(Astro.cookies);
-await activateDueRocks(team);
 const rocks = await many<Rock>(
-  sql()`select *, due_date::text as due_date from rocks where team = ${team} order by status asc, created_at desc`
+  sql()`select *, due_date::text as due_date, created_at::text as created_at from rocks where team = ${team} order by rocks.status asc, rocks.created_at desc`
 );
 
-const [periods, people] = await Promise.all([
+const [periods, people, settings] = await Promise.all([
   many<Period>(
     sql()`select id, team, name, start_date::text as start_date, end_date::text as end_date from periods where team = ${team} order by start_date`
   ),
   listPeopleOptions(true),
+  getSettings(),
 ]);
+const today = todayLocal();
+const thisQuarter = quarterOf(today, settings);
+
+// ── Quarter end: each rock is done or not done, target 80 % ────────────────
+// A rock belongs to the firm quarter its due date falls in (created date
+// when it has none). Dropped and planned rocks don't count.
+const quarterKey = (r: Rock) => quarterOf((r.due_date ?? r.created_at).slice(0, 10), settings);
+const byQuarter = new Map<string, { label: string; start_date: string; end_date: string; rocks: Rock[] }>();
+for (const r of rocks) {
+  if (r.status === 'dropped' || r.status === 'planned') continue;
+  const q = quarterKey(r);
+  const key = `${q.fy}-${q.q}`;
+  (byQuarter.get(key) ?? byQuarter.set(key, { label: q.label, start_date: q.start_date, end_date: q.end_date, rocks: [] }).get(key)!).rocks.push(r);
+}
+const quarters = [...byQuarter.values()].sort((a, b) => b.start_date.localeCompare(a.start_date));
+const view = Astro.url.searchParams.get('view') === 'quarter' ? 'quarter' : 'status';
+
+// ── Load: more than three rocks per person this quarter is a warning ──────
+const loadWarnings: string[] = [];
+{
+  const counts = new Map<string, number>();
+  for (const r of rocks) {
+    if (!r.owner || !(r.status === 'on_track' || r.status === 'off_track' || r.status === 'planned')) continue;
+    const q = quarterKey(r);
+    if (q.fy !== thisQuarter.fy || q.q !== thisQuarter.q) continue;
+    counts.set(r.owner, (counts.get(r.owner) ?? 0) + 1);
+  }
+  for (const [name, n] of counts) if (n > ROCK_LIMIT_PER_QUARTER) loadWarnings.push(`${name} owns ${n} rocks in ${thisQuarter.label} (EOS suggests at most ${ROCK_LIMIT_PER_QUARTER}).`);
+}
 
 const stepsByRock = await stepsForMany('rock', rocks.filter((r) => r.status === 'on_track' || r.status === 'off_track').map((r) => r.id));
 
@@ -54,7 +87,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 ---
 
-<Dashboard eyebrow={teamLabel(team)} title="Rocks" description="This team's rocks by status. The multi-year plan lives on the Roadmap.">
+<Dashboard eyebrow={teamLabel(team)} title="Rocks" description="This team's 90-day priorities: one owner each, due at quarter end, on track or off track. The multi-year plan lives on the Roadmap.">
   <a slot="actions" href="/dashboard/roadmap" class="btn-secondary text-sm">Roadmap →</a>
   {onTrackPct !== null && (
     <div slot="actions" class="text-right">
@@ -63,8 +96,41 @@ const STATUS_COLORS: Record<string, string> = {
     </div>
   )}
 
+  <!-- View switch -->
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+    <div class="inline-flex rounded-xl border border-line p-1 bg-bg-elevated" role="tablist">
+      <a href="?view=status" role="tab" aria-selected={view === 'status'} class={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${view === 'status' ? 'bg-bg-base text-ink-primary shadow-sm' : 'text-ink-muted hover:text-ink-primary'}`}>By status</a>
+      <a href="?view=quarter" role="tab" aria-selected={view === 'quarter'} class={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${view === 'quarter' ? 'bg-bg-base text-ink-primary shadow-sm' : 'text-ink-muted hover:text-ink-primary'}`}>Quarter end</a>
+    </div>
+    <AddRock periods={periods} team={team} people={people} quarterEnd={thisQuarter.end_date} status="on_track" client:load />
+  </div>
+
+  {loadWarnings.length > 0 && (
+    <div class="mb-6 p-3 rounded-xl text-sm bg-amber-50 border border-amber-200 text-amber-900">
+      {loadWarnings.map((w) => <p>{w}</p>)}
+    </div>
+  )}
+
+  {view === 'quarter' && (
+    <div class="space-y-8 mb-8">
+      {quarters.length === 0 && (
+        <div class="card text-center py-12"><p class="text-sm text-ink-secondary">No rocks with a due date yet.</p></div>
+      )}
+      {quarters.map((q) => (
+        <QuarterEndReview
+          label={q.label}
+          startDate={q.start_date}
+          endDate={q.end_date}
+          current={q.start_date === thisQuarter.start_date}
+          rocks={q.rocks}
+          client:load
+        />
+      ))}
+    </div>
+  )}
+
   <!-- Stats row -->
-  {rocks && rocks.length > 0 && (
+  {view === 'status' && rocks && rocks.length > 0 && (
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
       {[
         { label: 'On Track', val: statusGroups.on_track.length, cls: 'text-state-success' },
@@ -81,12 +147,12 @@ const STATUS_COLORS: Record<string, string> = {
   )}
 
   <!-- Rocks list -->
-  {!rocks?.length ? (
+  {view === 'status' && !rocks?.length ? (
     <div class="card text-center py-12">
       <p class="text-sm text-ink-secondary mb-2">No rocks yet.</p>
-      <p class="text-xs text-ink-muted">Upload an EOS recap or add rocks in a meeting to track quarterly goals.</p>
+      <p class="text-xs text-ink-muted">Add a rock above, adopt one from the Roadmap, or add one in a meeting.</p>
     </div>
-  ) : (
+  ) : view === 'status' && (
     <div class="space-y-3">
       {['on_track', 'off_track', 'planned', 'complete', 'dropped'].map(status => {
         const group = statusGroups[status as keyof typeof statusGroups];
@@ -105,19 +171,24 @@ const STATUS_COLORS: Record<string, string> = {
                     <div class="mt-1.5">
                       <RockControls
                         rockId={rock.id}
+                        title={rock.title}
                         status={rock.status}
                         periodId={rock.period_id ?? null}
                         periods={periods}
                         owner={rock.owner}
                         ownerId={rock.owner_id ?? null}
+                        dueDate={rock.due_date}
+                        level={rock.level}
                         team={team}
                         people={people}
+                        quarterEnd={thisQuarter.end_date}
                         client:visible
                       />
                     </div>
                     <div class="flex items-center gap-3 mt-1">
                       {rock.quarter && <p class="text-xs text-ink-muted">{rock.quarter}</p>}
-                      {rock.due_date && <p class="text-xs text-ink-muted">Due {rock.due_date}</p>}
+                      {rock.due_date && <p class="text-xs text-ink-muted">Due {rock.due_date} · {quarterKey(rock).label}</p>}
+                      {!rock.due_date && <p class="text-xs text-state-warning">No due date</p>}
                     </div>
                     {(rock.status === 'on_track' || rock.status === 'off_track') && (
                       <StepsPanel type="rock" parentId={rock.id} parentTitle={rock.title} initialSteps={stepsByRock[rock.id] ?? []} client:visible />

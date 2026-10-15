@@ -1,7 +1,9 @@
 import type { APIRoute } from 'astro';
 import { getMeeting, isUuid, json, notFound, readBody, requireAuth } from '../../../../lib/api';
 import { sql } from '../../../../lib/db';
+import { isIsoDate } from '../../../../lib/dates';
 import { nameKey, resolveOwnerNames } from '../../../../lib/people';
+import { plusDays } from '../../../../lib/todos';
 import type { MeetingAnalysis } from '../../../../types';
 
 // Writes the reviewed (checkbox-filtered) analysis into the real tables in
@@ -21,7 +23,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const meeting = await getMeeting<{ id: string; team: string; status: string }>(params.id, 'id, team, status');
+  const meeting = await getMeeting<{ id: string; team: string; status: string; date: string }>(params.id, 'id, team, status, date::text as date');
   if (!meeting) return notFound();
   if (meeting.status === 'approved' || meeting.status === 'distributed') {
     return json({ error: 'This meeting is approved and sealed; its record can no longer be changed' }, 409);
@@ -50,7 +52,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   // AI owner and presenter names → people (one query). A matched name gets
   // the person's id and canonical name; anything else stays as text.
   const people = await resolveOwnerNames(
-    [...a.rocks.map((r) => r.owner), ...a.todos_new.map((t) => t.owner), ...a.headlines.map((h) => h.presenter)].filter(
+    [...a.rocks.map((r) => r.owner), ...a.todos_new.map((t) => t.owner), ...a.actions.map((x) => x.owner), ...a.headlines.map((h) => h.presenter)].filter(
       (n): n is string => typeof n === 'string'
     )
   );
@@ -129,12 +131,22 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
         where not exists (select 1 from reviewed)`;
     }),
 
-    // ── To-dos ──────────────────────────────────────────────────────────
+    // ── To-dos (one list: minutes "actions" land here too, with their date) ─
     ...a.todos_new.map((t) => {
       const o = who(t.owner);
-      return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source)
-                values (${id}, ${team}, ${t.title}, ${o.owner}, ${o.owner_id}, 'open', 'analysis')`;
+      return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source, due_date)
+                values (${id}, ${team}, ${t.title}, ${o.owner}, ${o.owner_id}, 'open', 'analysis', ${plusDays(meeting.date, 7)})`;
     }),
+    ...a.actions
+      .filter((x) => typeof x.text === 'string' && x.text.trim())
+      .map((x) => {
+        const o = who(x.owner);
+        const due = isIsoDate(x.due_date) ? x.due_date : plusDays(meeting.date, 7);
+        return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source, due_date, completed_at)
+                  values (${id}, ${team}, ${x.text.trim().slice(0, 500)}, ${o.owner}, ${o.owner_id},
+                          ${x.status === 'completed' ? 'done' : 'open'}, 'analysis', ${due},
+                          ${x.status === 'completed' ? new Date() : null})`;
+      }),
     ...a.todos_reviewed
       .filter((t) => t.status !== 'open')
       .map((t) => {

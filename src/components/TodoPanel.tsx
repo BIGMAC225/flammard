@@ -37,9 +37,7 @@ const STATUS_COLORS: Record<TodoStatus, string> = {
   dropped: 'bg-bg-elevated text-ink-muted border-line',
 };
 
-const dayOf = (iso: string) => Date.parse(`${iso.slice(0, 10)}T00:00:00Z`);
-/** Whole days from when the to-do was added to the meeting date (never negative). */
-export const ageInDays = (createdAt: string, asOf: string) => Math.max(0, Math.round((dayOf(asOf) - dayOf(createdAt)) / 86400000));
+import { ageInDays, plusDays, TODO_MAX_AGE_DAYS } from '../lib/todos';
 const fmtDate = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 export default function TodoPanel({ meetingId, meetingDate, initialTodos, team, people, defaultOwner = UNASSIGNED }: TodoPanelProps) {
@@ -47,9 +45,10 @@ export default function TodoPanel({ meetingId, meetingDate, initialTodos, team, 
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newOwner, setNewOwner] = useState<OwnerValue>(defaultOwner);
+  const today = meetingDate ?? new Date().toISOString().slice(0, 10);
+  const [newDue, setNewDue] = useState(plusDays(today, 7));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const today = meetingDate ?? new Date().toISOString().slice(0, 10);
 
   const updateStatus = async (todo: PanelTodo, status: TodoStatus) => {
     const prev = todos;
@@ -70,7 +69,7 @@ export default function TodoPanel({ meetingId, meetingDate, initialTodos, team, 
     const res = await fetch(`/api/meetings/${meetingId}/todos`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle.trim(), owner_id: newOwner.owner_id, owner: newOwner.owner }),
+      body: JSON.stringify({ title: newTitle.trim(), owner_id: newOwner.owner_id, owner: newOwner.owner, due_date: newDue || null }),
     });
     const json = await res.json();
     setSaving(false);
@@ -78,6 +77,7 @@ export default function TodoPanel({ meetingId, meetingDate, initialTodos, team, 
     setTodos((t) => [...t, json.todo]);
     setNewTitle('');
     setNewOwner(defaultOwner);
+    setNewDue(plusDays(today, 7));
     setAdding(false);
   };
 
@@ -120,14 +120,19 @@ export default function TodoPanel({ meetingId, meetingDate, initialTodos, team, 
               added {fmtDate(todo.created_at)}
               {todo.meeting_id !== meetingId && todo.meeting_title ? ` (${todo.meeting_title})` : ''}
             </span>
-            {todo.status === 'open' && (
-              <span className={age > 14 ? ' text-state-danger font-medium' : ''}>
-                {' · '}
-                {age === 0 ? 'today' : `${age}d old`}
-              </span>
-            )}
+            {todo.due_date && ` · due ${fmtDate(todo.due_date)}`}
           </p>
         </div>
+        {todo.status === 'open' && (
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-medium tabular-nums flex-shrink-0 ${
+              age > TODO_MAX_AGE_DAYS ? 'bg-state-danger/15 text-state-danger' : 'bg-bg-surface text-ink-muted border border-line'
+            }`}
+            title={age > TODO_MAX_AGE_DAYS ? `Over ${TODO_MAX_AGE_DAYS} days: make it an issue` : 'Days since it was added'}
+          >
+            {age}d
+          </span>
+        )}
         <button
           onClick={() => removeTodo(todo.id)}
           className="text-ink-muted hover:text-state-danger transition-colors flex-shrink-0 p-1"
@@ -172,7 +177,10 @@ export default function TodoPanel({ meetingId, meetingDate, initialTodos, team, 
             onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') addTodo(); if (e.key === 'Escape') setAdding(false); }}
           />
-          <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} className="text-sm" />
+          <div className="flex gap-2">
+            <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} className="text-sm flex-1" />
+            <input type="date" className="input text-sm w-40" value={newDue} onChange={(e) => setNewDue(e.target.value)} aria-label="Due date" title="Due date: the next meeting by default" />
+          </div>
           {error && <p className="text-xs text-state-danger">{error}</p>}
           <div className="flex gap-2">
             <button onClick={addTodo} disabled={saving} className="btn-primary text-sm">

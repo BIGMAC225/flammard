@@ -63,7 +63,7 @@ export function loadMeetingTodos(meetingId: string, team: string): Promise<Meeti
   `);
 }
 
-export type MeetingIssue = Issue & { meeting_title: string | null; meeting_date: string | null };
+export type MeetingIssue = Issue & { meeting_title: string | null; meeting_date: string | null; pick: number | null };
 
 /**
  * Issues for the meeting's IDS: the team's open short-term list in rank
@@ -72,12 +72,22 @@ export type MeetingIssue = Issue & { meeting_title: string | null; meeting_date:
 export function loadMeetingIssues(meetingId: string, team: string): Promise<MeetingIssue[]> {
   return many<MeetingIssue>(sql()`
     select i.*, i.created_at::text as created_at, i.updated_at::text as updated_at,
-           m.title as meeting_title, m.date::text as meeting_date
-    from issues i left join meetings m on m.id = i.meeting_id
+           m.title as meeting_title, m.date::text as meeting_date, p.position as pick
+    from issues i
+    left join meetings m on m.id = i.meeting_id
+    left join meeting_issues p on p.issue_id = i.id and p.meeting_id = ${meetingId}
     where i.team = ${team}
-      and ((i.status = 'open' and i.horizon = 'short') or i.meeting_id = ${meetingId} or i.resolved_in_meeting_id = ${meetingId})
+      and ((i.status = 'open' and i.horizon = 'short') or i.meeting_id = ${meetingId} or i.resolved_in_meeting_id = ${meetingId}
+           or p.id is not null)
     order by i.status = 'open' desc, i.horizon, i.rank nulls last, i.created_at
   `);
+}
+
+/** The meeting's top-three picks: [{ issue_id, position }] in order. */
+export function loadPicks(meetingId: string): Promise<Array<{ issue_id: string; position: number }>> {
+  return many<{ issue_id: string; position: number }>(
+    sql()`select issue_id, position from meeting_issues where meeting_id = ${meetingId} order by position`
+  );
 }
 
 // ── Conclude ──────────────────────────────────────────────────────────────
