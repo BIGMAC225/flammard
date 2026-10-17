@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import OwnerPicker, { type OwnerValue } from './OwnerPicker';
-import type { MeetingRock, PersonOption, Rock, RockStatus, TeamId } from '../types';
+import type { MeetingRock, PersonOption, Rock, RockLevel, RockStatus, TeamId } from '../types';
 
 // The meeting's Rock review. The list is carried over from the team's active
 // rocks when the meeting is created (company rocks first, then by owner);
@@ -19,6 +19,8 @@ interface RocksPanelProps {
   people?: PersonOption[];
   /** The team's rocks that can be added to the review (active or planned). */
   teamRocks?: Pick<Rock, 'id' | 'title' | 'owner' | 'status' | 'level'>[];
+  /** Default due date for a new rock: the end of the current firm quarter. */
+  quarterEnd?: string;
 }
 
 const UNASSIGNED: OwnerValue = { owner_id: null, owner: null };
@@ -39,17 +41,21 @@ const STATUS_COLORS: Record<ReviewStatus, string> = {
 
 const NEW_ROCK = '__new__';
 
-export default function RocksPanel({ meetingId, initialRocks, team, people, teamRocks = [] }: RocksPanelProps) {
+export default function RocksPanel({ meetingId, initialRocks, team, people, teamRocks = [], quarterEnd = '' }: RocksPanelProps) {
   const [rocks, setRocks] = useState<MeetingRock[]>(initialRocks);
   const [adding, setAdding] = useState(false);
   const [pick, setPick] = useState<string>('');
   const [newTitle, setNewTitle] = useState('');
   const [newOwner, setNewOwner] = useState<OwnerValue>(UNASSIGNED);
   const [newStatus, setNewStatus] = useState<RockStatus>('on_track');
+  const [newDue, setNewDue] = useState(quarterEnd);
+  const [newLevel, setNewLevel] = useState<RockLevel | ''>('');
   const [saving, setSaving] = useState(false);
   const [carrying, setCarrying] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [warning, setWarning] = useState('');
+  const [dropped, setDropped] = useState<Record<string, 'busy' | 'done' | 'existed'>>({});
 
   const onList = new Set(rocks.map((r) => r.rock_id).filter(Boolean));
   const addable = teamRocks.filter((r) => !onList.has(r.id));
@@ -70,11 +76,14 @@ export default function RocksPanel({ meetingId, initialRocks, team, people, team
   const addRock = async () => {
     const existing = pick && pick !== NEW_ROCK ? pick : null;
     if (!existing && !newTitle.trim()) return;
+    if (!existing && !newOwner.owner) { setError('Every rock needs one owner'); return; }
+    if (!existing && !newDue) { setError('Every rock needs a due date'); return; }
     setSaving(true);
     setError('');
+    setWarning('');
     const body = existing
       ? { rock_id: existing, status: newStatus }
-      : { title: newTitle.trim(), owner_id: newOwner.owner_id, owner: newOwner.owner, status: newStatus };
+      : { title: newTitle.trim(), owner_id: newOwner.owner_id, owner: newOwner.owner, status: newStatus, due_date: newDue, level: newLevel || null };
     const res = await fetch(`/api/meetings/${meetingId}/rocks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -84,11 +93,33 @@ export default function RocksPanel({ meetingId, initialRocks, team, people, team
     setSaving(false);
     if (!res.ok) { setError(json.error ?? 'Failed to add rock'); return; }
     if (!json.existed) setRocks((r) => [...r, json.rock]);
+    if (json.warning) setWarning(json.warning);
     setPick('');
     setNewTitle('');
     setNewOwner(UNASSIGNED);
     setNewStatus('on_track');
+    setNewDue(quarterEnd);
+    setNewLevel('');
     setAdding(false);
+  };
+
+  /** Off track: it goes to the Issues List, no discussion here. */
+  const dropToIds = async (rock: MeetingRock) => {
+    if (!rock.rock_id) return;
+    setDropped((d) => ({ ...d, [rock.id]: 'busy' }));
+    setError('');
+    const res = await fetch(`/api/meetings/${meetingId}/issues`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: `Rock off track: ${rock.title}`.slice(0, 500), rock_id: rock.rock_id, owner_id: rock.owner_id, owner: rock.owner, priority: 'high', issue_type: 'problem' }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(json.error ?? 'Could not drop to IDS');
+      setDropped((d) => { const { [rock.id]: _, ...rest } = d; return rest; });
+      return;
+    }
+    setDropped((d) => ({ ...d, [rock.id]: json.existed ? 'existed' : 'done' }));
   };
 
   /** Brings in active team rocks that aren't on this meeting's list yet. */
@@ -144,7 +175,23 @@ export default function RocksPanel({ meetingId, initialRocks, team, people, team
           </select>
           <div className="flex-1 min-w-0">
             <p className="text-sm text-ink-primary truncate">{rock.title}</p>
-            <p className="text-xs text-ink-muted">{rock.owner ?? 'No owner'}</p>
+            <p className="text-xs text-ink-muted">
+              {rock.owner ?? 'No owner'}
+              {rock.status === 'off_track' && rock.rock_id && (
+                <>
+                  {' · '}
+                  {dropped[rock.id] === 'done' ? (
+                    <span className="text-state-danger">On the Issues List</span>
+                  ) : dropped[rock.id] === 'existed' ? (
+                    <span className="text-state-danger">Already on the Issues List</span>
+                  ) : (
+                    <button onClick={() => dropToIds(rock)} disabled={dropped[rock.id] === 'busy'} className="text-state-danger hover:underline" title="Add this rock to the Issues List">
+                      {dropped[rock.id] === 'busy' ? 'Dropping…' : 'Drop to IDS'}
+                    </button>
+                  )}
+                </>
+              )}
+            </p>
           </div>
           <button
             onClick={() => removeRock(rock.id)}
@@ -184,10 +231,18 @@ export default function RocksPanel({ meetingId, initialRocks, team, people, team
               onKeyDown={(e) => { if (e.key === 'Enter') addRock(); if (e.key === 'Escape') setAdding(false); }}
             />
           )}
+          {(addable.length === 0 || pick === NEW_ROCK) && (
+            <div className="grid sm:grid-cols-3 gap-2">
+              <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} allowUnassigned={false} placeholder="Owner (required)" className="text-sm" />
+              <input type="date" className="input text-sm" value={newDue} onChange={(e) => setNewDue(e.target.value)} aria-label="Due date" title="Due date (end of the quarter by default)" />
+              <select className="input text-sm" value={newLevel} onChange={(e) => setNewLevel(e.target.value as RockLevel | '')} aria-label="Level">
+                <option value="">Level: not set</option>
+                <option value="company">Company rock</option>
+                <option value="individual">Individual rock</option>
+              </select>
+            </div>
+          )}
           <div className="flex gap-2">
-            {(addable.length === 0 || pick === NEW_ROCK) && (
-              <OwnerPicker value={newOwner} onChange={setNewOwner} team={team} initialPeople={people} className="text-sm flex-1" />
-            )}
             <select
               className="input text-sm w-36"
               value={newStatus}
@@ -228,6 +283,7 @@ export default function RocksPanel({ meetingId, initialRocks, team, people, team
             </button>
           )}
           {notice && <span className="text-xs text-ink-muted">{notice}</span>}
+          {warning && <span className="text-xs text-state-warning">{warning}</span>}
           {error && !adding && <span className="text-xs text-state-danger">{error}</span>}
         </div>
       )}

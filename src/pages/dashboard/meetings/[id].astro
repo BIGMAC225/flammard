@@ -13,6 +13,8 @@ import { many, one, sql } from '../../../lib/db';
 import { getMeeting, principal } from '../../../lib/api';
 import { loadConclude, loadMeetingIssues, loadMeetingRocks, loadMeetingTodos } from '../../../lib/l10';
 import { listPeopleOptions } from '../../../lib/people';
+import { quarterOf } from '../../../lib/quarters';
+import { getSettings } from '../../../lib/settings';
 import { teamLabel } from '../../../lib/teams';
 import type { Minutes, Headline, Attendee, Meeting, Rock } from '../../../types';
 
@@ -68,6 +70,8 @@ const rating = conclude.average ?? meeting.meeting_rating;
 // Owner pickers on the EOS tab: the people list, and a new to-do's default
 // owner (the signed-in person; unassigned for the shared login)
 const people = activeTab === 'eos' ? await listPeopleOptions(true) : [];
+// A rock added here is due at the end of the firm quarter the meeting falls in
+const quarterEnd = activeTab === 'eos' ? quarterOf(meeting.date, await getSettings()).end_date : '';
 const me = principal(Astro.locals);
 const defaultOwner = me.kind === 'person' ? { owner_id: me.id, owner: me.name } : { owner_id: null, owner: null };
 ---
@@ -151,7 +155,7 @@ const defaultOwner = me.kind === 'person' ? { owner_id: me.id, owner: me.name } 
           </div>
           <a href="/dashboard/rocks" class="text-xs text-accent hover:text-accent-dim transition-colors">All rocks →</a>
         </div>
-        <RocksPanel meetingId={id} initialRocks={meetingRocks} team={meeting.team} people={people} teamRocks={teamRocks} client:load />
+        <RocksPanel meetingId={id} initialRocks={meetingRocks} team={meeting.team} people={people} teamRocks={teamRocks} quarterEnd={quarterEnd} client:load />
       </section>
 
       <section class="card">

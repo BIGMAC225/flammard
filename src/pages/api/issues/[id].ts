@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { isUuid, json, readBody, requireAuth, requireEnum, requireUuid } from '../../../lib/api';
 import { buildUpdate, one, sql } from '../../../lib/db';
-import { HORIZONS, PRIORITIES } from '../../../lib/issues';
+import { HORIZONS, ISSUE_TYPES, PRIORITIES, solveRequirementMet } from '../../../lib/issues';
 import { resolveOwner } from '../../../lib/people';
 
 const STATUSES = ['open', 'solved', 'dropped'];
@@ -12,7 +12,10 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
 
   const body = await readBody(request);
   const invalid =
-    requireEnum(body, 'status', STATUSES) ?? requireEnum(body, 'priority', PRIORITIES) ?? requireEnum(body, 'horizon', HORIZONS);
+    requireEnum(body, 'status', STATUSES) ??
+    requireEnum(body, 'priority', PRIORITIES) ??
+    requireEnum(body, 'horizon', HORIZONS) ??
+    (body.issue_type === null ? null : requireEnum(body, 'issue_type', ISSUE_TYPES));
   if (invalid) return invalid;
   if ('title' in body && (typeof body.title !== 'string' || !body.title.trim())) return json({ error: 'Title required' }, 400);
 
@@ -23,8 +26,16 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
     Object.assign(body, owner);
   }
 
-  const before = await one<{ horizon: string }>(sql()`select horizon from issues where id = ${params.id!}`);
+  const before = await one<{ horizon: string; resolution: string | null }>(sql()`select horizon, resolution from issues where id = ${params.id!}`);
   if (!before) return json({ error: 'Not found' }, 404);
+
+  // EOS: solved means a resolution and usually a to-do. Needs one or the other.
+  if (body.status === 'solved') {
+    const resolution = 'resolution' in body ? body.resolution : before.resolution;
+    if (!(await solveRequirementMet(params.id!, resolution))) {
+      return json({ error: 'To mark an issue solved, write a resolution note or add a to-do for it' }, 400);
+    }
+  }
 
   // The meeting it was solved or dropped in (the meeting page sends it with the status)
   if ('resolved_in_meeting_id' in body && body.resolved_in_meeting_id !== null && !isUuid(body.resolved_in_meeting_id)) {
@@ -44,7 +55,7 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
     'issues',
     params.id!,
     body,
-    ['status', 'resolution', 'priority', 'title', 'description', 'horizon', 'owner', 'owner_id', 'resolved_in_meeting_id'],
+    ['status', 'resolution', 'priority', 'title', 'description', 'horizon', 'owner', 'owner_id', 'resolved_in_meeting_id', 'issue_type'],
     extra
   );
   if (!update) return json({ error: 'Nothing to update' }, 400);

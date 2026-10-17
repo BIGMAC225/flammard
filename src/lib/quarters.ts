@@ -96,6 +96,12 @@ export function quarterForDate(date: string, s: QuarterSettings): { q: 1 | 2 | 3
   return { q: 1, fy: year }; // unreachable for valid settings
 }
 
+/** The firm quarter `date` ('YYYY-MM-DD') falls in, with its label and date range. */
+export function quarterOf(date: string, s: QuarterSettings): { q: 1 | 2 | 3 | 4; fy: number; label: string; start_date: string; end_date: string } {
+  const { q, fy } = quarterForDate(date, s);
+  return { q, fy, label: quarterLabel(q, fy), ...quarterDates(q, fy, s) };
+}
+
 /** "Q3 FY 2026" */
 export const quarterLabel = (q: number, fy: number) => `Q${q} FY ${fy}`;
 

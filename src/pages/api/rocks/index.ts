@@ -2,13 +2,17 @@ import type { APIRoute } from 'astro';
 import { isUuid, json, readBody, requireAuth, requireEnum } from '../../../lib/api';
 import { one, sql } from '../../../lib/db';
 import { currentTeam } from '../../../lib/teams';
-import { todayLocal } from '../../../lib/dates';
+import { isIsoDate, todayLocal } from '../../../lib/dates';
 import { resolveOwner } from '../../../lib/people';
+import { quarterEndFor, rockLoadWarning } from '../../../lib/rocks';
 
 const STATUSES = ['planned', 'on_track', 'off_track', 'complete', 'dropped'];
 const LEVELS = ['company', 'individual'];
 
-// Creates a master rock directly (roadmap / rocks page), outside any meeting.
+// Creates a team rock directly (roadmap / rocks page), outside any meeting.
+// Owner is required; the due date defaults to the end of the current firm
+// quarter. The response carries a `warning` when the owner now has more than
+// three rocks in that quarter.
 export const POST: APIRoute = async ({ request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
@@ -20,8 +24,10 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   const invalid = requireEnum(body, 'status', STATUSES);
   if (invalid) return invalid;
   if (body.level != null && !LEVELS.includes(body.level)) return json({ error: 'Invalid level' }, 400);
+  if (body.due_date != null && body.due_date !== '' && !isIsoDate(body.due_date)) return json({ error: 'Invalid due date' }, 400);
   const owner = await resolveOwner(body);
   if ('error' in owner) return json({ error: owner.error }, 400);
+  if (!owner.owner) return json({ error: 'Every rock needs one owner' }, 400);
 
   const team = currentTeam(cookies);
   const db = sql();
@@ -39,12 +45,14 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       rockStatus = period.end_date < today ? 'complete' : period.start_date > today ? 'planned' : 'on_track';
     }
   }
+  const dueDate: string = body.due_date || (await quarterEndFor());
 
-  const rock = await one(db`
-    insert into rocks (team, period_id, title, owner, owner_id, notes, status, level)
+  const rock = await one<{ id: string }>(db`
+    insert into rocks (team, period_id, title, owner, owner_id, notes, status, level, due_date)
     values (${team}, ${period_id ?? null}, ${title.trim()}, ${owner.owner}, ${owner.owner_id},
-            ${typeof notes === 'string' && notes.trim() ? notes.trim() : null}, ${rockStatus}, ${body.level ?? null})
+            ${typeof notes === 'string' && notes.trim() ? notes.trim() : null}, ${rockStatus}, ${body.level ?? null}, ${dueDate})
     returning *, due_date::text as due_date
   `);
-  return json({ rock });
+  const warning = await rockLoadWarning(team, owner.owner_id, dueDate, rock!.id);
+  return json({ rock, warning });
 };

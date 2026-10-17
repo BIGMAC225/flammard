@@ -21,5 +21,5 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
 
   const result = await insertIssue(await readBody(request), meeting.team, meeting.id);
   if ('error' in result) return json({ error: result.error }, 400);
-  return json({ issue: result.issue });
+  return json({ issue: result.issue, existed: result.existed ?? false });
 };

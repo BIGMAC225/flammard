@@ -35,6 +35,7 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   if ('resolved_meeting_id' in body && body.resolved_meeting_id !== null && !isUuid(body.resolved_meeting_id)) {
     return json({ error: 'Invalid resolved_meeting_id' }, 400);
   }
+  if ('issue_id' in body && body.issue_id !== null && !isUuid(body.issue_id)) return json({ error: 'Invalid issue_id' }, 400);
   // Done stamps completed_at; any other status clears it. Reopening forgets
   // which meeting closed it.
   const extra: Record<string, unknown> = { updated_at: new Date() };
@@ -48,7 +49,7 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
     'todos',
     params.id!,
     body,
-    ['status', 'title', 'owner', 'owner_id', 'due_date', 'description', 'resolved_meeting_id'],
+    ['status', 'title', 'owner', 'owner_id', 'due_date', 'description', 'resolved_meeting_id', 'issue_id'],
     extra
   );
   if (!update) return json({ error: 'Nothing to update' }, 400);

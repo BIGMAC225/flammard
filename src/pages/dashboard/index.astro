@@ -3,11 +3,10 @@ import Dashboard from '../../layouts/Dashboard.astro';
 import TangentAlert from '../../components/TangentAlert';
 import { many, one, sql } from '../../lib/db';
 import { currentTeam, teamLabel } from '../../lib/teams';
-import { activateDueRocks } from '../../lib/roadmap';
+import { TODO_DROP_OFF_TARGET } from '../../lib/todos';
 import type { Attendee } from '../../types';
 
 const team = currentTeam(Astro.cookies);
-await activateDueRocks(team);
 const db = sql();
 const [meetings, counts] = await Promise.all([
   many<{ id: string; title: string; date: string; status: string; attendees: Attendee[] }>(
@@ -36,6 +35,19 @@ const [meetings, counts] = await Promise.all([
 const c = counts!;
 const rocksPct = c.rocks_active > 0 ? Math.round((c.rocks_on_track / c.rocks_active) * 100) : null;
 
+// Weekly to-do drop-off: of the to-dos that were on the list going into the
+// last seven days (added before then and not already closed), how many came
+// off it as done or dropped. EOS wants about 90 %.
+const dropOff = await one<{ carried: number; off: number }>(db`
+  select
+    count(*)::int as carried,
+    count(*) filter (where status in ('done', 'dropped') and updated_at >= now() - interval '7 days')::int as off
+  from todos
+  where team = ${team} and created_at < now() - interval '7 days'
+    and (status = 'open' or (status in ('done', 'not_done', 'dropped') and updated_at >= now() - interval '7 days'))
+`);
+const dropPct = dropOff && dropOff.carried > 0 ? Math.round((dropOff.off / dropOff.carried) * 100) : null;
+
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
   minutes_draft: 'In review',
@@ -61,11 +73,13 @@ const STATUS_CLASS: Record<string, string> = {
 
   <!-- EOS KPIs -->
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-10">
-    <div class="stat-tile">
-      <p class="stat-tile-label">Meetings</p>
-      <p class="stat-tile-value">{c.total}</p>
-      <p class="stat-tile-hint">{c.approved} approved · {c.draft} in progress</p>
-    </div>
+    <a href="/dashboard/todos" class={`stat-tile block transition-shadow hover:shadow-lift ${dropPct !== null && dropPct < TODO_DROP_OFF_TARGET ? 'bg-amber-50 border-amber-200' : ''}`}>
+      <p class="stat-tile-label">To-do drop-off</p>
+      <p class={`stat-tile-value ${dropPct !== null ? (dropPct >= TODO_DROP_OFF_TARGET ? 'text-state-success' : 'text-amber-900') : ''}`}>
+        {dropPct !== null ? `${dropPct}%` : '—'}
+      </p>
+      <p class="stat-tile-hint">{dropOff?.carried ? `${dropOff.off} of ${dropOff.carried} this week · target ${TODO_DROP_OFF_TARGET}%` : `Target ${TODO_DROP_OFF_TARGET}% a week`}</p>
+    </a>
     <a href="/dashboard/rocks" class={`stat-tile block transition-shadow hover:shadow-lift ${rocksPct !== null && rocksPct < 70 ? 'bg-amber-50 border-amber-200' : ''}`}>
       <p class="stat-tile-label">Rocks on track</p>
       <p class={`stat-tile-value ${rocksPct !== null ? (rocksPct >= 70 ? 'text-state-success' : 'text-amber-900') : ''}`}>

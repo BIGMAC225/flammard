@@ -1,7 +1,9 @@
 import type { APIRoute } from 'astro';
 import { getMeeting, isUuid, json, notFound, readBody, requireAuth } from '../../../../lib/api';
 import { sql } from '../../../../lib/db';
+import { isIsoDate } from '../../../../lib/dates';
 import { nameKey, resolveOwnerNames } from '../../../../lib/people';
+import { plusDays } from '../../../../lib/todos';
 import type { MeetingAnalysis } from '../../../../types';
 
 // Writes the reviewed (checkbox-filtered) analysis into the real tables in
@@ -23,7 +25,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies);
   if (denied) return denied;
 
-  const meeting = await getMeeting<{ id: string; team: string; status: string }>(params.id, 'id, team, status');
+  const meeting = await getMeeting<{ id: string; team: string; status: string; date: string }>(params.id, 'id, team, status, date::text as date');
   if (!meeting) return notFound();
   if (meeting.status === 'approved' || meeting.status === 'distributed') {
     return json({ error: 'This meeting is approved and sealed; its record can no longer be changed' }, 409);
@@ -52,7 +54,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   // AI owner and presenter names → people (one query). A matched name gets
   // the person's id and canonical name; anything else stays as text.
   const people = await resolveOwnerNames(
-    [...a.rocks.map((r) => r.owner), ...a.todos_new.map((t) => t.owner), ...a.headlines.map((h) => h.presenter)].filter(
+    [...a.rocks.map((r) => r.owner), ...a.todos_new.map((t) => t.owner), ...a.actions.map((x) => x.owner), ...a.headlines.map((h) => h.presenter)].filter(
       (n): n is string => typeof n === 'string'
     )
   );
@@ -133,12 +135,29 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
         where not exists (select 1 from reviewed)`;
     }),
 
-    // ── To-dos ──────────────────────────────────────────────────────────
+    // ── To-dos (one list: minutes "actions" land here too, with their date) ─
     ...a.todos_new.map((t) => {
       const o = who(t.owner);
-      return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source)
-                values (${id}, ${team}, ${t.title}, ${o.owner}, ${o.owner_id}, 'open', 'analysis')`;
+      return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source, due_date)
+                values (${id}, ${team}, ${t.title}, ${o.owner}, ${o.owner_id}, 'open', 'analysis', ${plusDays(meeting.date, 7)})`;
     }),
+    // Minutes action items keyed like the one-off backfill in
+    // db/upgrades/2026-10-15-l10-rules.sql (external 'minutes',
+    // meeting:action id), so a backfilled row is updated, never duplicated
+    ...a.actions
+      .filter((x) => typeof x.text === 'string' && x.text.trim())
+      .map((x, n) => {
+        const o = who(x.owner);
+        const due = isIsoDate(x.due_date) ? x.due_date : plusDays(meeting.date, 7);
+        const status = x.status === 'completed' ? 'done' : 'open';
+        const externalId = `${id}:${typeof x.id === 'string' && x.id ? x.id : n + 1}`;
+        return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source, due_date, completed_at, external_source, external_id)
+                  values (${id}, ${team}, ${x.text.trim().slice(0, 500)}, ${o.owner}, ${o.owner_id}, ${status}, 'analysis', ${due},
+                          ${status === 'done' ? new Date() : null}, 'minutes', ${externalId})
+                  on conflict (external_source, external_id) where external_id is not null do update set
+                    title = excluded.title, owner = excluded.owner, owner_id = excluded.owner_id, status = excluded.status,
+                    due_date = excluded.due_date, completed_at = excluded.completed_at, source = 'analysis', updated_at = now()`;
+      }),
     ...a.todos_reviewed
       .filter((t) => t.status !== 'open')
       .map((t) => {
@@ -161,22 +180,28 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
         values (${id}, ${team}, ${i.title}, ${i.description}, ${i.priority}, 'open', 'analysis', 'short',
           (select coalesce(max(rank), 0) + 1 from issues where team = ${team} and horizon = 'short'))`
     ),
+    // The same rule as PATCH /api/issues/[id]: solved needs a resolution note
+    // or a to-do linked to the issue. A blank resolution can only close an
+    // existing issue that already has a linked to-do; it never creates one.
     ...a.issues_solved.map((i) => {
       const issueId = isUuid(i.issue_id) ? i.issue_id : null;
+      const resolution = typeof i.resolution === 'string' && i.resolution.trim() ? i.resolution.trim() : null;
       return db`
         with solved as (
-          update issues set status = 'solved', resolution = ${i.resolution}, analysis_resolution = ${i.resolution},
+          update issues set status = 'solved', resolution = coalesce(${resolution}::text, resolution), analysis_resolution = ${resolution}::text,
             resolved_in_meeting_id = ${id}, solved_at = now(), closed_by_analysis = true, updated_at = now()
           where id = (
-            select id from issues
-            where team = ${team} and meeting_id is distinct from ${id} and status = 'open'
-              and (id = ${issueId}::uuid or (${issueId}::uuid is null and lower(title) = lower(${i.title})))
+            select x.id from issues x
+            where x.team = ${team} and x.meeting_id is distinct from ${id} and x.status = 'open'
+              and (x.id = ${issueId}::uuid or (${issueId}::uuid is null and lower(x.title) = lower(${i.title})))
+              and (${resolution}::text is not null or nullif(btrim(x.resolution), '') is not null
+                   or exists (select 1 from todos t where t.issue_id = x.id))
             limit 1
           ) returning id
         )
         insert into issues (meeting_id, team, title, resolution, status, resolved_in_meeting_id, solved_at, priority, source)
-        select ${id}, ${team}, ${i.title}, ${i.resolution}, 'solved', ${id}, now(), 'medium', 'analysis'
-        where not exists (select 1 from solved)`;
+        select ${id}, ${team}, ${i.title}, ${resolution}, 'solved', ${id}, now(), 'medium', 'analysis'
+        where ${resolution}::text is not null and not exists (select 1 from solved)`;
     }),
 
     // ── Meeting metadata ────────────────────────────────────────────────

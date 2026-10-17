@@ -2,7 +2,6 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { many, one, sql } from './db';
 import { analyzeTranscript } from './claude';
 import { env } from './env';
-import { activateDueRocks } from './roadmap';
 import type { Attendee, MeetingAnalysis } from '../types';
 
 // Transcript → EOS analysis, saved on the meeting. Runs in the Netlify
@@ -24,7 +23,6 @@ export async function runMeetingAnalysis(meetingId: string): Promise<MeetingAnal
   if (!meeting.transcript) throw new Error('Upload a transcript before analyzing');
 
   try {
-    await activateDueRocks(meeting.team as 'leadership' | 'management');
     // Context so the model can match misheard names to real rocks/to-dos/issues
     const [rocks, openTodos, openIssues] = await Promise.all([
       many<{ id: string; title: string; owner: string | null; status: string }>(
