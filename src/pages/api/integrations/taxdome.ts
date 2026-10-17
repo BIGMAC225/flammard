@@ -7,6 +7,7 @@ import { many, one, sql } from '../../../lib/db';
 import { aiProvider, extractScorecardFromReport } from '../../../lib/claude';
 import { streamJSON } from '../../../lib/stream-json';
 import { isTeam } from '../../../lib/teams';
+import { collectReportFiles, MAX_REPORT_BYTES, ReportTooLargeError, stripNul, type ReportFile } from '../../../lib/taxdome-files';
 import { env } from '../../../lib/env';
 import type { ScorecardMetric } from '../../../types';
 
@@ -14,15 +15,16 @@ import type { ScorecardMetric } from '../../../types';
 // scheduled report email arrives. See docs/AUTOMATION.md for the Zap setup.
 //
 // Accepts, in order of preference:
-//   1. multipart/form-data with the PDF as a file part
-//   2. JSON { "file_url": "https://...", "file_name": "report.pdf" }
-//   3. JSON { "file_base64": "...", "file_name": "report.pdf" }
+//   1. multipart/form-data with the PDF, CSVs, or a .zip of them as file parts
+//      (Zapier's Gmail "All Attachments" sends one .zip)
+//   2. JSON { "file_url": "https://...", "file_name": "report.pdf" }  (PDF, CSV or .zip)
+//   3. JSON { "file_base64": "...", "file_name": "report.pdf" }       (PDF, CSV or .zip)
 //   4. JSON { "text": "..." } (already-extracted text)
 //
 // Auth: `Authorization: Bearer <TAXDOME_WEBHOOK_SECRET>`.
 // Team: `?team=leadership|management` (default leadership) — one Zap per team.
 
-const MAX_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_FILE_BYTES = MAX_REPORT_BYTES;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function secretMatches(provided: string, expected: string): boolean {
@@ -67,36 +69,24 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
   let fileName: string | null = null;
   let pdf: Buffer | null = null;
   let text: string | null = null;
+  let skipped: string[] = [];
 
   try {
     const contentType = request.headers.get('content-type') ?? '';
+    // TaxDome's scheduled liveboard email can carry one PDF or one CSV per
+    // tile; Zapier forwards all of them, either as separate files or as one
+    // .zip. Text files are joined (each under its file name) and handed to the
+    // extractor together; a PDF is used when there's no text file.
+    const files: ReportFile[] = [];
+    let jsonName: string | null = null;
     if (contentType.includes('multipart/form-data')) {
-      // TaxDome's scheduled liveboard email can carry one PDF or one CSV per
-      // tile; Zapier forwards all of them. Text files are joined (each under
-      // its file name) and handed to the extractor together; a PDF is used
-      // when there's no text file.
       const form = await request.formData();
-      const texts: string[] = [];
-      const names: string[] = [];
       let total = 0;
       for (const value of form.values()) {
         if (!(value instanceof File)) continue;
         total += value.size;
         if (value.size > MAX_FILE_BYTES || total > MAX_FILE_BYTES) return json({ error: 'Files are too large (20 MB max)' }, 413);
-        const bytes = Buffer.from(await value.arrayBuffer());
-        const isPdf = /pdf/i.test(value.type) || /\.pdf$/i.test(value.name) || bytes.subarray(0, 5).toString('latin1') === '%PDF-';
-        names.push(value.name);
-        if (isPdf) {
-          if (!pdf) pdf = bytes;
-        } else {
-          texts.push(`=== File: ${value.name} ===\n${bytes.toString('utf8').replace(/^﻿/, '').trim()}`);
-        }
-      }
-      fileName = names.length ? names.join(', ').slice(0, 500) : null;
-      console.log(`[taxdome] files=${names.length} text=${texts.length} pdf=${pdf ? 'yes' : 'no'} names=${fileName ?? ''}`);
-      if (texts.length) {
-        text = texts.join('\n\n');
-        pdf = null;
+        files.push({ name: value.name, type: value.type, bytes: new Uint8Array(await value.arrayBuffer()) });
       }
     } else {
       const body = (await request.json()) as {
@@ -105,10 +95,13 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
         file_name?: string;
         text?: string;
       };
-      fileName = body.file_name ?? null;
+      jsonName = body.file_name ?? null;
       if (body.text) text = body.text;
-      else if (body.file_base64) pdf = Buffer.from(body.file_base64, 'base64');
-      else if (body.file_url) {
+      else if (body.file_base64) {
+        const bytes = Buffer.from(body.file_base64, 'base64');
+        if (bytes.length > MAX_FILE_BYTES) return json({ error: 'File is too large (20 MB max)' }, 413);
+        files.push({ name: jsonName ?? 'report', bytes });
+      } else if (body.file_url) {
         // Only fetch over https, and never more than we'd accept as an upload
         if (!/^https:\/\//i.test(body.file_url)) return json({ error: 'file_url must be https' }, 400);
         const res = await fetch(body.file_url, { redirect: 'follow' });
@@ -117,17 +110,48 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
         if (declared > MAX_FILE_BYTES) return json({ error: 'File is too large (20 MB max)' }, 413);
         const bytes = await res.arrayBuffer();
         if (bytes.byteLength > MAX_FILE_BYTES) return json({ error: 'File is too large (20 MB max)' }, 413);
-        pdf = Buffer.from(bytes);
+        files.push({ name: jsonName ?? 'report', type: res.headers.get('content-type') ?? '', bytes: new Uint8Array(bytes) });
       }
-      if (pdf && pdf.length > MAX_FILE_BYTES) return json({ error: 'File is too large (20 MB max)' }, 413);
     }
-  } catch {
+    if (files.length) {
+      const collected = collectReportFiles(files);
+      ({ text, pdf, skipped } = collected);
+      fileName = (collected.names.length ? collected.names.join(', ') : jsonName)?.slice(0, 500) ?? null;
+      console.log(
+        `[taxdome] files=${collected.names.length} text=${text ? 'yes' : 'no'} pdf=${pdf ? 'yes' : 'no'} names=${fileName ?? ''}` +
+          (skipped.length ? ` skipped=${skipped.join('; ')}` : '')
+      );
+    } else {
+      fileName = jsonName;
+    }
+  } catch (err) {
+    if (err instanceof ReportTooLargeError) return json({ error: err.message }, 413);
     return json({ error: 'Could not read request body' }, 400);
   }
 
-  if (!pdf && !text) return json({ error: 'No report attached' }, 400);
+  // Postgres rejects text containing NUL, which would also sink the failure log
+  text = stripNul(text);
+  fileName = stripNul(fileName);
+
+  if (!pdf && !text) return json({ error: 'No report attached', ...(skipped.length ? { skipped } : {}) }, 400);
 
   const db = sql();
+
+  // Every failure ends up as a 'failed' row in the import log, including ones
+  // thrown by something unexpected; if even that insert fails, the function
+  // log is all that's left.
+  let failureLogged = false;
+  const logFailure = async (message: string) => {
+    failureLogged = true;
+    try {
+      await db`
+        insert into taxdome_imports (team, file_name, raw_text, status, error)
+        values (${team}, ${fileName}, ${text}, 'failed', ${stripNul(message)})
+      `;
+    } catch (err) {
+      console.log('[taxdome] could not log failed import', message, err instanceof Error ? err.message : err);
+    }
+  };
 
   const work = async () => {
     const metrics = await many<Pick<ScorecardMetric, 'id' | 'title' | 'goal' | 'unit' | 'frequency' | 'description'>>(
@@ -136,10 +160,7 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
 
     // Records the failure so it shows on the Scorecard page, then throws
     const fail = async (message: string): Promise<never> => {
-      await db`
-        insert into taxdome_imports (team, file_name, raw_text, status, error)
-        values (${team}, ${fileName}, ${text}, 'failed', ${message})
-      `;
+      await logFailure(message);
       throw new Error(message);
     };
 
@@ -147,7 +168,7 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
 
     if (!text && pdf) {
       try {
-        text = await pdfToText(pdf);
+        text = stripNul(await pdfToText(pdf));
       } catch (err) {
         await fail(`PDF text extraction failed: ${err instanceof Error ? err.message : 'unknown'}`);
       }
@@ -197,7 +218,8 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
       }
     } catch (err) {
       const message = `Saving entries failed: ${err instanceof Error ? err.message : 'unknown'}`;
-      await db`update taxdome_imports set status = 'failed', error = ${message}, entries_written = 0 where id = ${importRow.id}`;
+      failureLogged = true;
+      await db`update taxdome_imports set status = 'failed', error = ${stripNul(message)}, entries_written = 0 where id = ${importRow.id}`;
       throw new Error(message);
     }
 
@@ -210,6 +232,15 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
     };
   };
 
+  const run = async () => {
+    try {
+      return await work();
+    } catch (err) {
+      if (!failureLogged) await logFailure(`Import failed: ${err instanceof Error ? err.message : 'unknown'}`);
+      throw err;
+    }
+  };
+
   // ?async=1 (used by the Flammard Zapier app, whose actions time out after
   // about 30s): answer at once and finish the import after the response.
   // The result lands in the Scorecard page's import log either way.
@@ -217,13 +248,13 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
     ?.waitUntil;
   if (url.searchParams.get('async') === '1' && typeof waitUntil === 'function') {
     waitUntil(
-      work()
+      run()
         .then((r) => console.log('[taxdome] async import done', JSON.stringify(r)))
         .catch((err) => console.log('[taxdome] async import failed', err instanceof Error ? err.message : err))
     );
-    return json({ ok: true, accepted: true, files: fileName, note: 'Import is running; check the Scorecard page in a minute.' }, 202);
+    return json({ ok: true, accepted: true, files: fileName, ...(skipped.length ? { skipped } : {}), note: 'Import is running; check the Scorecard page in a minute.' }, 202);
   }
-  return streamJSON(work);
+  return streamJSON(run);
 };
 
 // Connection check for the Flammard Zapier app: 200 with the team's active

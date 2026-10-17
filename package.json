@@ -20,6 +20,7 @@
     "@neondatabase/serverless": "^1.1.0",
     "@netlify/blobs": "^10.7.13",
     "astro": "^5.5.5",
+    "fflate": "^0.8.3",
     "jspdf": "^2.5.2",
     "jszip": "^3.10.2",
     "pdf-parse": "^2.4.5",
