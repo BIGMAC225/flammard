@@ -9,8 +9,10 @@ import type { MeetingAnalysis } from '../../../../types';
 // Writes the reviewed (checkbox-filtered) analysis into the real tables in
 // one transaction. Committing again first undoes everything the previous
 // commit did — rows it created (source = 'analysis') and older to-dos/issues
-// it closed — so accepting twice (or retrying after a failure) never
-// duplicates. Items added by hand on the EOS tab are left alone.
+// it closed (closed_by_analysis) — so accepting twice (or retrying after a
+// failure) never duplicates. Items added or closed by hand on the EOS tab
+// are left alone, and a resolution the analysis didn't write is never
+// touched (analysis_resolution records what it wrote).
 //
 // Neon's HTTP driver only runs non-interactive transactions (every statement
 // is sent at once), so the find-or-create steps are single statements built
@@ -68,11 +70,13 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     //    the check above and here): division by zero aborts the whole batch
     db`select 1 / (case when status in ('approved', 'distributed') then 0 else 1 end) from meetings where id = ${id}`,
 
-    // ── Undo the previous commit of this meeting ────────────────────────
-    db`update todos set status = 'open', resolved_meeting_id = null, completed_at = null, updated_at = now()
-       where resolved_meeting_id = ${id} and meeting_id is distinct from ${id}`,
-    db`update issues set status = 'open', resolution = null, resolved_in_meeting_id = null, solved_at = null, updated_at = now()
-       where resolved_in_meeting_id = ${id} and meeting_id is distinct from ${id}`,
+    // ── Undo the previous commit of this meeting (only what it closed) ──
+    db`update todos set status = 'open', resolved_meeting_id = null, completed_at = null, closed_by_analysis = false, updated_at = now()
+       where resolved_meeting_id = ${id} and closed_by_analysis and meeting_id is distinct from ${id}`,
+    db`update issues set status = 'open', resolved_in_meeting_id = null, solved_at = null, closed_by_analysis = false, updated_at = now(),
+         resolution = case when analysis_resolution is not null and resolution is not distinct from analysis_resolution then null else resolution end,
+         analysis_resolution = null
+       where resolved_in_meeting_id = ${id} and closed_by_analysis and meeting_id is distinct from ${id}`,
     db`delete from steps where parent_type = 'todo' and parent_id in (select id from todos where meeting_id = ${id} and source = 'analysis')`,
     db`delete from steps where parent_type = 'issue' and parent_id in (select id from issues where meeting_id = ${id} and source = 'analysis')`,
     db`delete from headlines where meeting_id = ${id} and source = 'analysis'`,
@@ -152,7 +156,7 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
       .map((t) => {
         const todoId = isUuid(t.todo_id) ? t.todo_id : null;
         return db`
-          update todos set status = ${t.status}, resolved_meeting_id = ${id}, updated_at = now(),
+          update todos set status = ${t.status}, resolved_meeting_id = ${id}, closed_by_analysis = true, updated_at = now(),
             completed_at = case when ${t.status}::text = 'done' then now() else null end
           where id = (
             select id from todos
@@ -177,8 +181,8 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
       const resolution = typeof i.resolution === 'string' && i.resolution.trim() ? i.resolution.trim() : null;
       return db`
         with solved as (
-          update issues set status = 'solved', resolution = coalesce(${resolution}::text, resolution), resolved_in_meeting_id = ${id},
-            solved_at = now(), updated_at = now()
+          update issues set status = 'solved', resolution = coalesce(${resolution}::text, resolution), analysis_resolution = ${resolution}::text,
+            resolved_in_meeting_id = ${id}, solved_at = now(), closed_by_analysis = true, updated_at = now()
           where id = (
             select x.id from issues x
             where x.team = ${team} and x.meeting_id is distinct from ${id} and x.status = 'open'

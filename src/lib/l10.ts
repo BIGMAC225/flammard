@@ -99,6 +99,8 @@ export interface ConcludeData {
   /** To-dos created in this meeting (the recap), oldest first. */
   todos: Todo[];
   conclude_notes: string | null;
+  /** meetings.meeting_rating: the average, or the one number the analysis heard. */
+  meeting_rating: number | null;
 }
 
 export const averageRating = (ratings: Array<{ rating: number }>): number | null =>
@@ -119,9 +121,18 @@ export async function loadConclude(meetingId: string): Promise<ConcludeData> {
       select *, created_at::text as created_at, updated_at::text as updated_at, due_date::text as due_date
       from todos where meeting_id = ${meetingId} order by todos.created_at, todos.id
     `),
-    one<{ conclude_notes: string | null }>(db`select conclude_notes from meetings where id = ${meetingId}`),
+    one<{ conclude_notes: string | null; meeting_rating: string | number | null }>(
+      db`select conclude_notes, meeting_rating from meetings where id = ${meetingId}`
+    ),
   ]);
-  return { ratings, average: averageRating(ratings), messages, todos, conclude_notes: meeting?.conclude_notes ?? null };
+  return {
+    ratings,
+    average: averageRating(ratings),
+    messages,
+    todos,
+    conclude_notes: meeting?.conclude_notes ?? null,
+    meeting_rating: meeting?.meeting_rating == null ? null : Number(meeting.meeting_rating),
+  };
 }
 
 // ── Five-line export ──────────────────────────────────────────────────────
@@ -158,10 +169,14 @@ export async function buildFiveLines(meeting: { id: string; team: string; date: 
   const solved = issues.filter((i) => i.status === 'solved' && i.resolved_in_meeting_id === meeting.id);
   const raised = issues.filter((i) => i.meeting_id === meeting.id);
 
+  // Per-attendee ratings when Conclude was filled in; else the meeting's
+  // stored rating (e.g. the one number the analysis heard); else not rated
   const rating =
-    conclude.average == null
-      ? 'not rated'
-      : `${conclude.average.toFixed(1)} (${conclude.ratings.map((r) => `${r.name}: ${r.rating}`).join(', ')})`;
+    conclude.average != null
+      ? `${conclude.average.toFixed(1)} (${conclude.ratings.map((r) => `${r.name}: ${r.rating}`).join(', ')})`
+      : conclude.meeting_rating != null
+        ? conclude.meeting_rating.toFixed(1)
+        : 'not rated';
   const messages = conclude.messages.map((m) =>
     [m.message, m.to_whom && `to ${m.to_whom}`, m.by_whom && `by ${m.by_whom}`, m.how && `via ${m.how}`].filter(Boolean).join(', ')
   );

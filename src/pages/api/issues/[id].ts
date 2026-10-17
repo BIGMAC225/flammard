@@ -46,8 +46,10 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   const extra: Record<string, unknown> = { updated_at: new Date() };
   if ('status' in body) {
     extra.solved_at = body.status === 'solved' ? new Date() : null;
+    extra.closed_by_analysis = false; // a person decided; a re-run analysis leaves it alone
     if (body.status === 'open') body.resolved_in_meeting_id = null;
   }
+  if ('resolution' in body) extra.analysis_resolution = null; // typed by a person now
 
   const update = buildUpdate(
     'issues',
