@@ -58,14 +58,18 @@ Each team (Leadership / Management) has its own scorecard, so the webhook URL ca
 
 Create a Zap:
 
-1. **Trigger — Email by Zapier: New Inbound Email.** Zapier gives you an address like `something.abc123@zapiermail.com`. Use that as the TaxDome recipient. (If you'd rather keep it in your own mailbox, use the **Gmail: New Attachment** trigger with a label/filter for the TaxDome sender instead.)
+Recommended setup (TaxDome emails to your own Gmail):
+
+1. **Trigger — Gmail: New Email Matching Search**, with a search that matches the TaxDome report email (e.g. `from:taxdome has:attachment subject:"Weekly Numbers"`).
 2. **Action — Webhooks by Zapier: POST.**
-   - **URL:** `https://<your-site>/api/integrations/taxdome?team=leadership` (shown on the Scorecard page; `management` for the other team)
+   - **URL:** `https://<your-site>/api/integrations/taxdome?team=leadership&async=1` (shown on the Scorecard page; `management` for the other team). `async=1` answers at once (HTTP 202) and finishes the import in the background, so Zapier's 30-second limit never cuts it off.
    - **Payload Type:** `form`
-   - **File:** map the email's **Attachment** field
+   - **File:** map the email's **All Attachments** field. Zapier sends these as **one .zip** (named like `Write-UpDown % (…)_and_others.zip`) — that's supported: the webhook unzips it in memory and reads every CSV/PDF inside (up to 50 files, 20 MB uncompressed). A single **Attachment** field, or several file parts, work too.
+
+   (Alternatively, use **Email by Zapier: New Inbound Email** as the trigger and set its `…@zapiermail.com` address as the TaxDome recipient.)
    - **Headers:** `Authorization` = `Bearer <TAXDOME_WEBHOOK_SECRET>`
    - Leave "Wrap request in array" off.
-3. Test the step with a real TaxDome email. The response looks like:
+3. Test the step with a real TaxDome email. With `async=1` the response is `{ "ok": true, "accepted": true, "files": "…" }` listing the files it found (and `skipped` for any attachment that isn't a PDF or text/CSV file); the result then appears in the Scorecard page's import log. Without `async=1` the response looks like:
 
    ```json
    { "ok": true, "period_date": "2026-09-19", "entries_written": 4, "unmatched": [{ "label": "Open jobs", "value": "37" }] }
@@ -73,7 +77,9 @@ Create a Zap:
 
    `unmatched` lists figures found in the report that didn't map to any metric — if one belongs on the scorecard, add a metric for it and the next import will fill it.
 
-The webhook also accepts JSON bodies (`{ "file_url": "…" }`, `{ "file_base64": "…" }` or `{ "text": "…" }`) if the Zap can't send a file part.
+The webhook also accepts JSON bodies (`{ "file_url": "…" }`, `{ "file_base64": "…" }` or `{ "text": "…" }`) if the Zap can't send a file part; the file can be a PDF, a CSV or a .zip of them.
+
+Every failure — including one in the background (`async=1`) — is logged on the Scorecard page as a failed import with the error.
 
 Every import is logged on the Scorecard page with its status, period and any extraction error. Values land in the scorecard grid under the report's period-end date; a re-sent report for the same period overwrites rather than duplicates.
 
