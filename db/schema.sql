@@ -546,6 +546,8 @@ join meetings m on m.id = mi.meeting_id
 cross join lateral jsonb_array_elements(case when jsonb_typeof(mi.actions) = 'array' then mi.actions else '[]'::jsonb end) with ordinality as x(a, ord)
 left join person_name_keys k on k.key = lower(btrim(a->>'owner'))
 where nullif(btrim(a->>'text'), '') is not null
+  -- not already a to-do (an analysis commit from before this key, or the same action re-run)
+  and not exists (select 1 from todos t where t.meeting_id = mi.meeting_id and lower(btrim(t.title)) = lower(btrim(left(a->>'text', 500))))
 on conflict (external_source, external_id) where external_id is not null do nothing;
 
 -- ── Indexes ───────────────────────────────────────────────────────────────

@@ -141,15 +141,22 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
       return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source, due_date)
                 values (${id}, ${team}, ${t.title}, ${o.owner}, ${o.owner_id}, 'open', 'analysis', ${plusDays(meeting.date, 7)})`;
     }),
+    // Minutes action items keyed like the one-off backfill in
+    // db/upgrades/2026-10-15-l10-rules.sql (external 'minutes',
+    // meeting:action id), so a backfilled row is updated, never duplicated
     ...a.actions
       .filter((x) => typeof x.text === 'string' && x.text.trim())
-      .map((x) => {
+      .map((x, n) => {
         const o = who(x.owner);
         const due = isIsoDate(x.due_date) ? x.due_date : plusDays(meeting.date, 7);
-        return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source, due_date, completed_at)
-                  values (${id}, ${team}, ${x.text.trim().slice(0, 500)}, ${o.owner}, ${o.owner_id},
-                          ${x.status === 'completed' ? 'done' : 'open'}, 'analysis', ${due},
-                          ${x.status === 'completed' ? new Date() : null})`;
+        const status = x.status === 'completed' ? 'done' : 'open';
+        const externalId = `${id}:${typeof x.id === 'string' && x.id ? x.id : n + 1}`;
+        return db`insert into todos (meeting_id, team, title, owner, owner_id, status, source, due_date, completed_at, external_source, external_id)
+                  values (${id}, ${team}, ${x.text.trim().slice(0, 500)}, ${o.owner}, ${o.owner_id}, ${status}, 'analysis', ${due},
+                          ${status === 'done' ? new Date() : null}, 'minutes', ${externalId})
+                  on conflict (external_source, external_id) where external_id is not null do update set
+                    title = excluded.title, owner = excluded.owner, owner_id = excluded.owner_id, status = excluded.status,
+                    due_date = excluded.due_date, completed_at = excluded.completed_at, source = 'analysis', updated_at = now()`;
       }),
     ...a.todos_reviewed
       .filter((t) => t.status !== 'open')
