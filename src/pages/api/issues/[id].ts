@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { json, readBody, requireAuth, requireEnum, requireUuid } from '../../../lib/api';
+import { isUuid, json, readBody, requireAuth, requireEnum, requireUuid } from '../../../lib/api';
 import { buildUpdate, one, sql } from '../../../lib/db';
 import { HORIZONS, PRIORITIES } from '../../../lib/issues';
 import { resolveOwner } from '../../../lib/people';
@@ -26,15 +26,25 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   const before = await one<{ horizon: string }>(sql()`select horizon from issues where id = ${params.id!}`);
   if (!before) return json({ error: 'Not found' }, 404);
 
-  // Solving stamps solved_at; reopening (or dropping) clears it
+  // The meeting it was solved or dropped in (the meeting page sends it with the status)
+  if ('resolved_in_meeting_id' in body && body.resolved_in_meeting_id !== null && !isUuid(body.resolved_in_meeting_id)) {
+    return json({ error: 'Invalid resolved_in_meeting_id' }, 400);
+  }
+  // Solving stamps solved_at; reopening (or dropping) clears it. Reopening
+  // also forgets which meeting closed it.
   const extra: Record<string, unknown> = { updated_at: new Date() };
-  if ('status' in body) extra.solved_at = body.status === 'solved' ? new Date() : null;
+  if ('status' in body) {
+    extra.solved_at = body.status === 'solved' ? new Date() : null;
+    extra.closed_by_analysis = false; // a person decided; a re-run analysis leaves it alone
+    if (body.status === 'open') body.resolved_in_meeting_id = null;
+  }
+  if ('resolution' in body) extra.analysis_resolution = null; // typed by a person now
 
   const update = buildUpdate(
     'issues',
     params.id!,
     body,
-    ['status', 'resolution', 'priority', 'title', 'description', 'horizon', 'owner', 'owner_id'],
+    ['status', 'resolution', 'priority', 'title', 'description', 'horizon', 'owner', 'owner_id', 'resolved_in_meeting_id'],
     extra
   );
   if (!update) return json({ error: 'Nothing to update' }, 400);

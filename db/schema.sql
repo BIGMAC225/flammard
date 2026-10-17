@@ -457,6 +457,51 @@ having count(distinct id) = 1;
 alter table meetings add column if not exists analysis_started_at timestamptz;
 alter table meetings add column if not exists analysis_error text;
 
+-- ── L10 Conclude (2026-10-15) ─────────────────────────────────────────────
+-- Also shipped as db/upgrades/2026-10-15-l10-conclude.sql.
+-- One rating per attendee per meeting (1–10). `name` is the attendee as
+-- written on the meeting; person_id is set when it matches a person. The
+-- average is kept on meetings.meeting_rating so the PDF and lists keep working.
+create table if not exists meeting_ratings (
+  id          uuid primary key default gen_random_uuid(),
+  meeting_id  uuid not null references meetings(id) on delete cascade,
+  person_id   uuid references people(id) on delete set null,
+  name        text not null check (btrim(name) <> ''),
+  rating      smallint not null check (rating between 1 and 10),
+  sort_order  integer not null default 0,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create unique index if not exists meeting_ratings_meeting_name_uidx on meeting_ratings(meeting_id, lower(btrim(name)));
+
+-- Cascading messages agreed in Conclude: what to tell whom, by whom, and how.
+create table if not exists cascading_messages (
+  id          uuid primary key default gen_random_uuid(),
+  meeting_id  uuid not null references meetings(id) on delete cascade,
+  message     text not null check (btrim(message) <> ''),
+  to_whom     text,
+  by_whom     text,
+  by_whom_id  uuid references people(id) on delete set null,
+  how         text,
+  sort_order  integer not null default 0,
+  created_at  timestamptz not null default now()
+);
+create index if not exists cascading_messages_meeting_idx on cascading_messages(meeting_id, sort_order);
+
+-- Which closes the transcript analysis made, so accepting an analysis again
+-- undoes only its own work: a to-do or issue a person closed on the meeting
+-- page stays closed. analysis_resolution is the text the analysis wrote
+-- (null when it kept an existing resolution), so undo never nulls a
+-- resolution a person typed.
+alter table todos  add column if not exists closed_by_analysis boolean not null default false;
+alter table issues add column if not exists closed_by_analysis boolean not null default false;
+alter table issues add column if not exists analysis_resolution text;
+
+-- Which meeting carried a rock review / closed a to-do or issue
+create index if not exists meeting_rocks_rock_idx       on meeting_rocks(rock_id) where rock_id is not null;
+create index if not exists todos_resolved_meeting_idx   on todos(resolved_meeting_id) where resolved_meeting_id is not null;
+create index if not exists issues_resolved_meeting_idx  on issues(resolved_in_meeting_id) where resolved_in_meeting_id is not null;
+
 -- ── Indexes ───────────────────────────────────────────────────────────────
 create index if not exists meetings_date_idx        on meetings(date desc);
 create index if not exists meetings_team_idx        on meetings(team);

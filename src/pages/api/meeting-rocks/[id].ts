@@ -5,7 +5,10 @@ import { resolveOwner } from '../../../lib/people';
 
 const STATUSES = ['on_track', 'off_track', 'complete', 'dropped'];
 
-// Updates a meeting's rock snapshot: its status and/or its owner.
+// Updates a meeting's rock snapshot: its status and/or its owner. The status
+// is the weekly review, so it is written through to the team rock it points
+// at (by id) — next week's meeting then carries the rock over as on/off
+// track, and a rock marked complete or dropped leaves the active list.
 export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   const denied = requireAuth(cookies) ?? requireUuid(params.id);
   if (denied) return denied;
@@ -28,7 +31,16 @@ export const PATCH: APIRoute = async ({ params, request, cookies }) => {
   if (!update) return json({ error: 'Nothing to update' }, 400);
   const rows = await sql().query(update.text, update.params);
   if (!rows.length) return json({ error: 'Not found' }, 404);
-  return json({ ok: true, rock: rows[0] });
+  const snapshot = rows[0];
+  if (body.status && snapshot.rock_id) {
+    await sql()`
+      update rocks set status = ${body.status},
+        completed_at = case when ${body.status}::text = 'complete' then coalesce(completed_at, now()) else null end,
+        updated_at = now()
+      where id = ${snapshot.rock_id} and status <> ${body.status}
+    `;
+  }
+  return json({ ok: true, rock: snapshot });
 };
 
 export const DELETE: APIRoute = async ({ params, cookies }) => {

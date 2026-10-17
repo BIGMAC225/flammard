@@ -27,14 +27,14 @@ export async function runMeetingAnalysis(meetingId: string): Promise<MeetingAnal
     await activateDueRocks(meeting.team as 'leadership' | 'management');
     // Context so the model can match misheard names to real rocks/to-dos/issues
     const [rocks, openTodos, openIssues] = await Promise.all([
-      many<{ title: string; owner: string | null; status: string }>(
-        db`select title, owner, status from rocks where team = ${meeting.team} and status in ('on_track', 'off_track')`
+      many<{ id: string; title: string; owner: string | null; status: string }>(
+        db`select id, title, owner, status from rocks where team = ${meeting.team} and status in ('on_track', 'off_track')`
       ),
-      many<{ title: string; owner: string | null }>(db`
-        select title, owner from todos where team = ${meeting.team} and status = 'open'
+      many<{ id: string; title: string; owner: string | null }>(db`
+        select id, title, owner from todos where team = ${meeting.team} and status = 'open'
       `),
-      many<{ title: string }>(db`
-        select title from issues where team = ${meeting.team} and status = 'open'
+      many<{ id: string; title: string }>(db`
+        select id, title from issues where team = ${meeting.team} and status = 'open'
         order by horizon desc, rank nulls last
       `),
     ]);

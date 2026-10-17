@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { json, requireAuth } from '../../../lib/api';
 import { one, sql } from '../../../lib/db';
+import { carryRocksIntoMeeting } from '../../../lib/l10';
 import { currentTeam, isTeam } from '../../../lib/teams';
 import type { Attendee } from '../../../types';
 
@@ -24,5 +25,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     values (${team}, ${title.trim()}, ${date}, ${location?.trim() || null}, ${JSON.stringify(attendees ?? [])}::jsonb)
     returning id
   `);
+  // The L10 never starts blank: the team's active rocks come along for review
+  // (to-dos and issues are standing lists, read live by the meeting page)
+  await carryRocksIntoMeeting(row!.id, team);
   return json({ id: row!.id });
 };

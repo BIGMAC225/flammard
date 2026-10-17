@@ -2,9 +2,16 @@ import { useState } from 'react';
 import OwnerPicker, { type OwnerValue } from './OwnerPicker';
 import type { Issue, IssueStatus, IssuePriority, PersonOption, TeamId } from '../types';
 
+// The meeting's IDS: the team's short-term Issues List in rank order (the
+// same list as the Issues page), plus anything raised in this meeting.
+// Solving or dropping one here records this meeting as the one that closed
+// it. The team picks the top three and works them in order 1, 2, 3.
+
+export type PanelIssue = Issue & { meeting_title?: string | null; meeting_date?: string | null };
+
 interface IssuesPanelProps {
   meetingId: string;
-  initialIssues: Issue[];
+  initialIssues: PanelIssue[];
   team?: TeamId;
   /** Server-rendered picker list (including inactive people). */
   people?: PersonOption[];
@@ -25,7 +32,7 @@ const PRIORITY_COLORS: Record<IssuePriority, string> = {
 };
 
 export default function IssuesPanel({ meetingId, initialIssues, team, people }: IssuesPanelProps) {
-  const [issues, setIssues] = useState<Issue[]>(initialIssues);
+  const [issues, setIssues] = useState<PanelIssue[]>(initialIssues);
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
@@ -36,14 +43,17 @@ export default function IssuesPanel({ meetingId, initialIssues, team, people }: 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [resolutions, setResolutions] = useState<Record<string, string>>({});
 
-  const updateStatus = async (issue: Issue, status: IssueStatus) => {
+  const updateStatus = async (issue: PanelIssue, status: IssueStatus) => {
     const prev = issues;
     const resolution = status === 'solved' ? (resolutions[issue.id] ?? issue.resolution ?? '') : issue.resolution;
-    setIssues((list) => list.map((x) => (x.id === issue.id ? { ...x, status, resolution: resolution ?? null } : x)));
+    const resolvedIn = status === 'open' ? null : meetingId;
+    setIssues((list) =>
+      list.map((x) => (x.id === issue.id ? { ...x, status, resolution: resolution ?? null, resolved_in_meeting_id: resolvedIn } : x))
+    );
     const res = await fetch(`/api/issues/${issue.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, resolution: resolution ?? null }),
+      body: JSON.stringify({ status, resolution: resolution ?? null, resolved_in_meeting_id: resolvedIn }),
     });
     if (!res.ok) setIssues(prev);
   };
@@ -81,20 +91,33 @@ export default function IssuesPanel({ meetingId, initialIssues, team, people }: 
     if (!res.ok) setIssues(prev);
   };
 
-  const open = issues.filter((i) => i.status === 'open');
+  const byRank = (a: PanelIssue, b: PanelIssue) =>
+    (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER) || String(a.created_at).localeCompare(String(b.created_at));
+  const open = issues.filter((i) => i.status === 'open').sort(byRank);
   const solved = issues.filter((i) => i.status === 'solved');
   const dropped = issues.filter((i) => i.status === 'dropped');
   const ordered = [...open, ...solved, ...dropped];
+  const position = new Map(open.map((i, n) => [i.id, n + 1]));
 
   return (
     <div className="space-y-3">
       {ordered.length === 0 && !adding && (
-        <p className="text-sm text-ink-muted py-4 text-center">No issues recorded for this meeting.</p>
+        <p className="text-sm text-ink-muted py-4 text-center">The Issues List is empty. Add what came up in Rocks, Headlines or To-dos.</p>
+      )}
+      {open.length > 0 && (
+        <p className="text-xs text-ink-muted">
+          {open.length} open, in rank order. Pick the top three, then solve them in order 1, 2, 3.
+        </p>
       )}
 
       {ordered.map((issue) => (
         <div key={issue.id} className="border border-line rounded-xl bg-bg-elevated overflow-hidden">
           <div className="flex items-center gap-3 px-4 py-3">
+            {issue.status === 'open' && (
+              <span className="font-display text-base font-semibold tabular-nums text-ink-muted w-5 text-right flex-shrink-0">
+                {position.get(issue.id)}
+              </span>
+            )}
             <select
               value={issue.status}
               onChange={(e) => updateStatus(issue, e.target.value as IssueStatus)}
@@ -111,7 +134,15 @@ export default function IssuesPanel({ meetingId, initialIssues, team, people }: 
                   {issue.priority}
                 </span>
               </div>
-              {issue.owner && <p className="text-xs text-ink-muted mt-0.5">{issue.owner}</p>}
+              <p className="text-xs text-ink-muted mt-0.5">
+                {issue.owner ?? 'Unassigned'}
+                {issue.meeting_id === meetingId
+                  ? ' · raised in this meeting'
+                  : issue.meeting_title
+                    ? ` · from ${issue.meeting_title}`
+                    : ` · added ${String(issue.created_at).slice(0, 10)}`}
+                {issue.status !== 'open' && issue.resolved_in_meeting_id === meetingId && ' · closed in this meeting'}
+              </p>
               {issue.resolution && (
                 <p className="text-xs text-ink-muted mt-0.5 truncate">↳ {issue.resolution}</p>
               )}
@@ -129,7 +160,8 @@ export default function IssuesPanel({ meetingId, initialIssues, team, people }: 
               <button
                 onClick={() => removeIssue(issue.id)}
                 className="text-ink-muted hover:text-state-danger transition-colors p-1"
-                aria-label="Remove"
+                aria-label="Delete issue"
+                title="Delete this issue (use Dropped to keep a record)"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                   <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>

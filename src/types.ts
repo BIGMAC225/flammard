@@ -255,13 +255,38 @@ export interface MeetingAnalysis {
   actions: ActionItem[];
   discussion: DiscussionPoint[];
   headlines: Array<{ type: HeadlineType; text: string; presenter: string | null }>;
-  rocks: Array<{ title: string; owner: string | null; status: RockStatus; notes: string | null }>;
+  // rock_id / todo_id / issue_id: the existing item the model matched (from the
+  // ids in its context); null when it is new or the model couldn't tell.
+  rocks: Array<{ rock_id?: string | null; title: string; owner: string | null; status: RockStatus; notes: string | null }>;
   todos_new: Array<{ title: string; owner: string | null }>;
-  todos_reviewed: Array<{ title: string; status: TodoStatus }>;
+  todos_reviewed: Array<{ todo_id?: string | null; title: string; status: TodoStatus }>;
   issues_new: Array<{ title: string; description: string | null; priority: IssuePriority }>;
-  issues_solved: Array<{ title: string; resolution: string | null }>;
+  issues_solved: Array<{ issue_id?: string | null; title: string; resolution: string | null }>;
   meeting_rating: number | null;
   conclude_notes: string | null;
+}
+
+// ── L10 Conclude ───────────────────────────────────────────────────────────
+
+/** One attendee's 1–10 rating of a meeting. */
+export interface MeetingRating {
+  id: string;
+  meeting_id: string;
+  person_id: string | null;
+  name: string;
+  rating: number;
+}
+
+/** A cascading message agreed in Conclude: what to tell whom, by whom, how. */
+export interface CascadingMessage {
+  id: string;
+  meeting_id: string;
+  message: string;
+  to_whom: string | null;
+  by_whom: string | null;
+  by_whom_id: string | null;
+  how: string | null;
+  sort_order: number;
 }
 
 // ── TaxDome report import ──────────────────────────────────────────────────
