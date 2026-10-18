@@ -81,7 +81,7 @@ The webhook also accepts JSON bodies (`{ "file_url": "…" }`, `{ "file_base64":
 
 Every failure — including one in the background (`async=1`) — is logged on the Scorecard page as a failed import with the error. If the background job can't even be started, the webhook answers HTTP 502 (not 202) and logs that as a failed import too. The hand-off is signed with a key derived from `SESSION_SECRET`, which must be set (it already is for sign-in).
 
-Every import is logged on the Scorecard page with its status, period and any extraction error. Values land in the scorecard grid under the report's period-end date; a re-sent report for the same period overwrites rather than duplicates.
+Every import is logged on the Scorecard page with its status, period and any extraction error. Values land in the scorecard grid under the day the report was produced, in Central time (America/Chicago). That date is read from the report itself, not by the AI: the `"Data extract produced by … on MM/DD/YYYY HH:MM UTC"` line TaxDome puts at the top of each CSV (the latest one when several files arrive), or else a `MM/DD/YYYY HH:MM:SS UTC` stamp in a PDF; when the report has neither, today's Central-time date. The period the AI reads from the report is kept in the import log for reference. A re-sent report produced the same day overwrites rather than duplicates.
 
 ### Timing
 

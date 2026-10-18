@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { many, one, sql } from './db';
 import { extractScorecardFromReport } from './claude';
 import { stripNul } from './taxdome-files';
+import { taxdomeReportDate } from './taxdome-date';
 import { env } from './env';
 import { taxdomeJobs } from './blobs';
 import {
@@ -125,18 +126,20 @@ export async function runTaxdomeImport(report: TaxdomeReport): Promise<TaxdomeIm
       return fail(`Extraction failed: ${err instanceof Error ? err.message : 'unknown'}`);
     }
 
-    // The model returns dates as text; don't let a malformed one break the insert
+    // The model's reading of the period the report covers is kept on the
+    // import row for reference only. It returns dates as text; don't let a
+    // malformed one break the insert.
     const periodStart = extracted.period_start && ISO_DATE.test(extracted.period_start) ? extracted.period_start : null;
-    const periodDate =
-      extracted.period_end && ISO_DATE.test(extracted.period_end)
-        ? extracted.period_end
-        : new Date().toISOString().slice(0, 10);
+    const periodEnd = extracted.period_end && ISO_DATE.test(extracted.period_end) ? extracted.period_end : null;
+    // The entries are dated by the day the report was produced (Chicago time),
+    // read from the report's own timestamp rather than asked of the model.
+    const periodDate = taxdomeReportDate(text);
 
     let importRow: { id: string } | null = null;
     try {
       importRow = await one<{ id: string }>(db`
         insert into taxdome_imports (team, file_name, report_title, period_start, period_end, raw_text, extracted, status, entries_written)
-        values (${team}, ${fileName}, ${extracted.report_title}, ${periodStart}, ${periodDate}, ${text}, ${JSON.stringify(extracted)}::jsonb,
+        values (${team}, ${fileName}, ${extracted.report_title}, ${periodStart}, ${periodEnd}, ${text}, ${JSON.stringify(extracted)}::jsonb,
                 'processed', ${extracted.values.length})
         returning id
       `);
