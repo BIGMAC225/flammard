@@ -1,16 +1,19 @@
 import { getStore } from '@netlify/blobs';
 
-// Netlify Blobs replaces Supabase Storage. Two stores:
+// Netlify Blobs replaces Supabase Storage. Stores:
 //   recordings  — browser audio, uploaded in ≤3 MB chunks (`<prefix>/<n>`)
 //                 because a serverless request body is capped at 6 MB (and
 //                 binary bodies are base64-encoded on the way in), and read
 //                 back chunk by chunk because streamed responses cap at 20 MB
 //   minutes-pdf — the sealed PDF per approval
 //   auth        — login throttling counters
+//   taxdome-jobs — a TaxDome report waiting for the background import
+//                  (`<job id>/meta` JSON + `<job id>/pdf`), deleted once processed
 
 export const recordings = () => getStore({ name: 'recordings', consistency: 'strong' });
 export const minutesPdf = () => getStore({ name: 'minutes-pdf', consistency: 'strong' });
 export const authStore = () => getStore({ name: 'auth', consistency: 'strong' });
+export const taxdomeJobs = () => getStore({ name: 'taxdome-jobs', consistency: 'strong' });
 
 export const CHUNK_BYTES = 3 * 1024 * 1024;
 
