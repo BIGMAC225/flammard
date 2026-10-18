@@ -11,15 +11,17 @@ const MODEL = 'claude-opus-5';
 //   NVIDIA (build.nvidia.com, OpenAI-compatible) when NVIDIA_API_KEY is set,
 //   Anthropic Claude when ANTHROPIC_API_KEY is set.
 // AI_PROVIDER=nvidia|anthropic picks one when both keys exist (default nvidia).
-// NVIDIA_MODEL overrides the model (default moonshotai/kimi-k3).
+// NVIDIA_MODEL overrides the model (default nvidia/nemotron-3-super-120b-a12b;
+// the previous default, moonshotai/kimi-k3, was retired by NVIDIA on 2026-10-15).
 // The step breakdown must answer inside a normal 60s page request, so it has
 // its own model: NVIDIA_BREAKDOWN_MODEL (default nemotron-3-super, below) or
 // ANTHROPIC_BREAKDOWN_MODEL (default the Claude model above).
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-const NVIDIA_DEFAULT_MODEL = 'moonshotai/kimi-k3';
-// Kimi K3 took 163–250s per breakdown on the free API (2026-10-06); this one
-// took 3–16s at every detail level with schema-valid output.
+const NVIDIA_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
+// Kimi K3 (the old default, since retired) took 163–250s per breakdown on the
+// free API (2026-10-06); this one took 3–16s at every detail level with
+// schema-valid output.
 const NVIDIA_BREAKDOWN_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
 
 let _client: Anthropic | null = null;
@@ -204,7 +206,7 @@ async function nvidiaStructured<S extends z.ZodType>(
     };
     const choice = data.choices?.[0];
     if (choice?.finish_reason === 'length') throw new Error(`${call.label} was cut off (NVIDIA max_tokens ${maxTokens})`);
-    // Reasoning models (Kimi K3) sometimes leave `content` empty and put the
+    // Reasoning models sometimes leave `content` empty and put the
     // whole answer, JSON included, in `reasoning_content`
     const content = choice?.message?.content ?? '';
     if (content.trim()) return content;

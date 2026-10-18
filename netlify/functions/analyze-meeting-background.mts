@@ -1,6 +1,6 @@
 // Netlify background function: runs one meeting's transcript analysis.
 // Background functions answer 202 at once and may run up to 15 minutes,
-// so slow models (NVIDIA Kimi K3 on a long transcript) finish instead of
+// so slow models (e.g. a reasoning model on a long transcript) finish instead of
 // being cut off at the 60s limit of normal page requests.
 //
 // Called only by POST /api/meetings/[id]/analyze with a signature derived
