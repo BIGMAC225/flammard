@@ -62,7 +62,7 @@ Recommended setup (TaxDome emails to your own Gmail):
 
 1. **Trigger — Gmail: New Email Matching Search**, with a search that matches the TaxDome report email (e.g. `from:taxdome has:attachment subject:"Weekly Numbers"`).
 2. **Action — Webhooks by Zapier: POST.**
-   - **URL:** `https://<your-site>/api/integrations/taxdome?team=leadership&async=1` (shown on the Scorecard page; `management` for the other team). `async=1` answers at once (HTTP 202) and finishes the import in the background, so Zapier's 30-second limit never cuts it off.
+   - **URL:** `https://<your-site>/api/integrations/taxdome?team=leadership&async=1` (shown on the Scorecard page; `management` for the other team). `async=1` answers at once (HTTP 202) and hands the import to the Netlify background function `taxdome-import-background` (up to 15 minutes; the report is parked in Netlify Blobs store `taxdome-jobs` and deleted once processed), so Zapier's 30-second limit never cuts it off.
    - **Payload Type:** `form`
    - **File:** map the email's **All Attachments** field. Zapier sends these as **one .zip** (named like `Write-UpDown % (…)_and_others.zip`) — that's supported: the webhook unzips it in memory and reads every CSV/PDF inside (up to 50 files, 20 MB uncompressed). A single **Attachment** field, or several file parts, work too.
 
@@ -79,7 +79,7 @@ Recommended setup (TaxDome emails to your own Gmail):
 
 The webhook also accepts JSON bodies (`{ "file_url": "…" }`, `{ "file_base64": "…" }` or `{ "text": "…" }`) if the Zap can't send a file part; the file can be a PDF, a CSV or a .zip of them.
 
-Every failure — including one in the background (`async=1`) — is logged on the Scorecard page as a failed import with the error.
+Every failure — including one in the background (`async=1`) — is logged on the Scorecard page as a failed import with the error. If the background job can't even be started, the webhook answers HTTP 502 (not 202) and logs that as a failed import too. The hand-off is signed with a key derived from `SESSION_SECRET`, which must be set (it already is for sign-in).
 
 Every import is logged on the Scorecard page with its status, period and any extraction error. Values land in the scorecard grid under the report's period-end date; a re-sent report for the same period overwrites rather than duplicates.
 

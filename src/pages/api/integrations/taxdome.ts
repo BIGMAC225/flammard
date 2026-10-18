@@ -1,15 +1,13 @@
 import type { APIRoute } from 'astro';
 import { timingSafeEqual } from 'node:crypto';
-import { PDFParse } from 'pdf-parse';
-import { getData as pdfWorkerData } from 'pdf-parse/worker';
 import { json } from '../../../lib/api';
-import { many, one, sql } from '../../../lib/db';
-import { aiProvider, extractScorecardFromReport } from '../../../lib/claude';
+import { one, sql } from '../../../lib/db';
+import { aiProvider } from '../../../lib/claude';
 import { streamJSON } from '../../../lib/stream-json';
 import { isTeam } from '../../../lib/teams';
 import { collectReportFiles, MAX_REPORT_BYTES, ReportTooLargeError, stripNul, type ReportFile } from '../../../lib/taxdome-files';
 import { env } from '../../../lib/env';
-import type { ScorecardMetric } from '../../../types';
+import { logTaxdomeFailure, runTaxdomeImport, startTaxdomeImportJob, type TaxdomeReport } from '../../../lib/taxdome-import';
 
 // Inbound webhook for TaxDome report exports, called by Zapier when the
 // scheduled report email arrives. See docs/AUTOMATION.md for the Zap setup.
@@ -24,8 +22,10 @@ import type { ScorecardMetric } from '../../../types';
 // Auth: `Authorization: Bearer <TAXDOME_WEBHOOK_SECRET>`.
 // Team: `?team=leadership|management` (default leadership) — one Zap per team.
 
+// With ?async=1 the import itself runs in the background function
+// netlify/functions/taxdome-import-background.mts; see src/lib/taxdome-import.ts.
+
 const MAX_FILE_BYTES = MAX_REPORT_BYTES;
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function secretMatches(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
@@ -33,24 +33,7 @@ function secretMatches(provided: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-// pdfjs looks for its worker by relative path, which doesn't survive being
-// bundled into a serverless function; hand it the inlined worker instead.
-let workerReady = false;
-async function pdfToText(pdf: Buffer): Promise<string> {
-  if (!workerReady) {
-    PDFParse.setWorker(pdfWorkerData());
-    workerReady = true;
-  }
-  const parser = new PDFParse({ data: pdf });
-  try {
-    const result = await parser.getText();
-    return result.text;
-  } finally {
-    await parser.destroy().catch(() => {});
-  }
-}
-
-export const POST: APIRoute = async ({ request, url, locals }) => {
+export const POST: APIRoute = async ({ request, url }) => {
   const secret = env('TAXDOME_WEBHOOK_SECRET');
   const teamParam = url.searchParams.get('team') ?? 'leadership';
   if (!isTeam(teamParam)) return json({ error: 'Unknown team' }, 400);
@@ -135,126 +118,23 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
 
   if (!pdf && !text) return json({ error: 'No report attached', ...(skipped.length ? { skipped } : {}) }, 400);
 
-  const db = sql();
-
-  // Every failure ends up as a 'failed' row in the import log, including ones
-  // thrown by something unexpected; if even that insert fails, the function
-  // log is all that's left.
-  let failureLogged = false;
-  const logFailure = async (message: string) => {
-    failureLogged = true;
-    try {
-      await db`
-        insert into taxdome_imports (team, file_name, raw_text, status, error)
-        values (${team}, ${fileName}, ${text}, 'failed', ${stripNul(message)})
-      `;
-    } catch (err) {
-      console.log('[taxdome] could not log failed import', message, err instanceof Error ? err.message : err);
-    }
-  };
-
-  const work = async () => {
-    const metrics = await many<Pick<ScorecardMetric, 'id' | 'title' | 'goal' | 'unit' | 'frequency' | 'description'>>(
-      db`select id, title, goal, unit, frequency, description from scorecard_metrics where active and team = ${team} order by sort_order`
-    );
-
-    // Records the failure so it shows on the Scorecard page, then throws
-    const fail = async (message: string): Promise<never> => {
-      await logFailure(message);
-      throw new Error(message);
-    };
-
-    if (!metrics.length) await fail('No active scorecard metrics — add metrics in the Scorecard page first');
-
-    if (!text && pdf) {
-      try {
-        text = stripNul(await pdfToText(pdf));
-      } catch (err) {
-        await fail(`PDF text extraction failed: ${err instanceof Error ? err.message : 'unknown'}`);
-      }
-    }
-    if (!text || text.trim().length < 30) await fail('The PDF contains no readable text');
-
-    let extracted;
-    try {
-      extracted = await extractScorecardFromReport(text!, metrics);
-    } catch (err) {
-      return fail(`Extraction failed: ${err instanceof Error ? err.message : 'unknown'}`);
-    }
-
-    // The model returns dates as text; don't let a malformed one break the insert
-    const periodStart = extracted.period_start && ISO_DATE.test(extracted.period_start) ? extracted.period_start : null;
-    const periodDate =
-      extracted.period_end && ISO_DATE.test(extracted.period_end)
-        ? extracted.period_end
-        : new Date().toISOString().slice(0, 10);
-
-    let importRow: { id: string } | null = null;
-    try {
-      importRow = await one<{ id: string }>(db`
-        insert into taxdome_imports (team, file_name, report_title, period_start, period_end, raw_text, extracted, status, entries_written)
-        values (${team}, ${fileName}, ${extracted.report_title}, ${periodStart}, ${periodDate}, ${text}, ${JSON.stringify(extracted)}::jsonb,
-                'processed', ${extracted.values.length})
-        returning id
-      `);
-    } catch (err) {
-      return fail(`Saving import failed: ${err instanceof Error ? err.message : 'unknown'}`);
-    }
-    if (!importRow) return fail('Saving import failed');
-
-    try {
-      const rowId = importRow.id;
-      if (extracted.values.length) {
-        await db.transaction(
-          extracted.values.map(
-            (v) => db`
-              insert into scorecard_entries (metric_id, period_date, value, on_track, notes, source, import_id)
-              values (${v.metric_id}, ${periodDate}, ${v.value}, ${v.on_track}, ${v.notes}, 'taxdome', ${rowId})
-              on conflict (metric_id, period_date) do update set
-                value = excluded.value, on_track = excluded.on_track, notes = excluded.notes,
-                source = 'taxdome', import_id = excluded.import_id`
-          )
-        );
-      }
-    } catch (err) {
-      const message = `Saving entries failed: ${err instanceof Error ? err.message : 'unknown'}`;
-      failureLogged = true;
-      await db`update taxdome_imports set status = 'failed', error = ${stripNul(message)}, entries_written = 0 where id = ${importRow.id}`;
-      throw new Error(message);
-    }
-
-    return {
-      ok: true,
-      import_id: importRow.id,
-      period_date: periodDate,
-      entries_written: extracted.values.length,
-      unmatched: extracted.unmatched,
-    };
-  };
-
-  const run = async () => {
-    try {
-      return await work();
-    } catch (err) {
-      if (!failureLogged) await logFailure(`Import failed: ${err instanceof Error ? err.message : 'unknown'}`);
-      throw err;
-    }
-  };
+  const report: TaxdomeReport = { team, fileName, text, pdf };
 
   // ?async=1 (used by the Flammard Zapier app, whose actions time out after
-  // about 30s): answer at once and finish the import after the response.
-  // The result lands in the Scorecard page's import log either way.
-  const waitUntil = (locals as { netlify?: { context?: { waitUntil?: (p: Promise<unknown>) => void } } }).netlify?.context
-    ?.waitUntil;
-  if (url.searchParams.get('async') === '1' && typeof waitUntil === 'function') {
-    waitUntil(
-      run()
-        .then((r) => console.log('[taxdome] async import done', JSON.stringify(r)))
-        .catch((err) => console.log('[taxdome] async import failed', err instanceof Error ? err.message : err))
-    );
+  // about 30s): hand the report to the background function (up to 15 minutes)
+  // and answer at once. The result lands in the Scorecard page's import log.
+  // If the job can't be started, that is logged as a failed import too.
+  if (url.searchParams.get('async') === '1') {
+    const job = await startTaxdomeImportJob(url.origin, report);
+    if (!job.ok) {
+      console.log('[taxdome] async import not started', job.error);
+      await logTaxdomeFailure(report, job.error);
+      return json({ error: job.error, files: fileName, ...(skipped.length ? { skipped } : {}) }, 502);
+    }
+    console.log(`[taxdome] async import queued job=${job.jobId}`);
     return json({ ok: true, accepted: true, files: fileName, ...(skipped.length ? { skipped } : {}), note: 'Import is running; check the Scorecard page in a minute.' }, 202);
   }
-  return streamJSON(run);
+  return streamJSON(() => runTaxdomeImport(report));
 };
 
 // Connection check for the Flammard Zapier app: 200 with the team's active

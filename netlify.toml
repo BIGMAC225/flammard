@@ -8,3 +8,8 @@
 [functions]
   node_bundler = "esbuild"
   included_files = ["dist/**"]
+
+# pdf-parse loads @napi-rs/canvas (a native module) for PDF reports; esbuild
+# can't bundle .node binaries, so ship the package as-is with the function.
+[functions."taxdome-import-background"]
+  external_node_modules = ["@napi-rs/canvas"]
