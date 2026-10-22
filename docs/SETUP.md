@@ -32,7 +32,8 @@ Free tier: 0.5 GB storage, scales to zero when idle, no pausing.
 | `SHARED_PASSWORD` | during rollout | The old shared team password. Remove it once everyone has their own account; with it unset the team-password form disappears. |
 | `SHARED_PASSWORD_LOGIN` | optional | `on` (default) allows the team password and existing team-password sessions; `off` turns both off. |
 | `SHARED_LOGIN_ROLE` | optional | What the team password may do: `facilitator` (default), or `manager`, `member`, `observer`. It never grants People, Settings or Import. |
-| `ANTHROPIC_API_KEY` | for AI steps | Transcript analysis and TaxDome extraction. |
+| `ZAI_API_KEY` | for AI steps | Recommended. Z.ai GLM for transcript analysis and TaxDome extraction. `AI_PROVIDER` optional. |
+| `NVIDIA_API_KEY` / `ANTHROPIC_API_KEY` | | Alternative AI providers instead of Z.ai. |
 | `TAXDOME_WEBHOOK_SECRET` | for TaxDome | Bearer secret Zapier sends. `openssl rand -hex 32`. |
 | `PUBLIC_APP_URL` | yes | e.g. `https://flammard.netlify.app` — shown as the webhook URL. |
 | `PUBLIC_APP_NAME` | optional | Name in the header and PDF. Default `Flammard`. |

@@ -2,19 +2,29 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { env } from './env';
+import { chatCompletion, extractJson, selectProvider } from './openai-compat';
+import type { AiProvider, ChatEndpoint } from './openai-compat';
 import type { MeetingAnalysis, ProposedRoadmap, ProposedStep, ScorecardExtraction, ScorecardMetric } from '../types';
+
+export type { AiProvider } from './openai-compat';
 
 const MODEL = 'claude-opus-5';
 
 // ── Provider ──────────────────────────────────────────────────────────────
-// Every AI step returns JSON checked against a zod schema. Two providers:
+// Every AI step returns JSON checked against a zod schema. Three providers:
+//   Z.ai GLM (OpenAI-compatible) when ZAI_API_KEY is set,
 //   NVIDIA (build.nvidia.com, OpenAI-compatible) when NVIDIA_API_KEY is set,
 //   Anthropic Claude when ANTHROPIC_API_KEY is set.
-// AI_PROVIDER=nvidia|anthropic picks one when both keys exist (default nvidia).
-// NVIDIA_MODEL overrides the model (default nvidia/nemotron-3-super-120b-a12b;
-// the previous default, moonshotai/kimi-k3, was retired by NVIDIA on 2026-10-15).
+// AI_PROVIDER=zai|nvidia|anthropic picks one when several keys exist
+// (default zai, then nvidia, then anthropic).
+// ZAI_MODEL overrides the Z.ai model (default glm-5.3), ZAI_BASE_URL the API
+// root (default https://api.z.ai/api/paas/v4) and ZAI_MAX_TOKENS the reply
+// cap (default 16000). NVIDIA_MODEL overrides the NVIDIA model (default
+// nvidia/nemotron-3-super-120b-a12b; the previous default, moonshotai/kimi-k3,
+// was retired by NVIDIA on 2026-10-15).
 // The step breakdown must answer inside a normal 60s page request, so it has
-// its own model: NVIDIA_BREAKDOWN_MODEL (default nemotron-3-super, below) or
+// its own model: ZAI_BREAKDOWN_MODEL (default glm-5.3-flash, below),
+// NVIDIA_BREAKDOWN_MODEL (default nemotron-3-super, below) or
 // ANTHROPIC_BREAKDOWN_MODEL (default the Claude model above).
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
@@ -23,6 +33,9 @@ const NVIDIA_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
 // free API (2026-10-06); this one took 3–16s at every detail level with
 // schema-valid output.
 const NVIDIA_BREAKDOWN_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
+const ZAI_DEFAULT_BASE_URL = 'https://api.z.ai/api/paas/v4';
+const ZAI_DEFAULT_MODEL = 'glm-5.3';
+const ZAI_BREAKDOWN_DEFAULT_MODEL = 'glm-5.3-flash';
 
 let _client: Anthropic | null = null;
 function client(): Anthropic {
@@ -32,13 +45,8 @@ function client(): Anthropic {
 }
 
 /** Which provider will run, or null when no key is configured. */
-export function aiProvider(): 'nvidia' | 'anthropic' | null {
-  const nvidia = Boolean(env('NVIDIA_API_KEY'));
-  const anthropic = Boolean(env('ANTHROPIC_API_KEY'));
-  const pick = (env('AI_PROVIDER') ?? '').toLowerCase();
-  if (pick === 'anthropic' && anthropic) return 'anthropic';
-  if (pick === 'nvidia' && nvidia) return 'nvidia';
-  return nvidia ? 'nvidia' : anthropic ? 'anthropic' : null;
+export function aiProvider(): AiProvider | null {
+  return selectProvider(env);
 }
 
 interface StructuredCall {
@@ -65,10 +73,12 @@ interface StructuredCall {
 
 async function structured<S extends z.ZodType>(schema: S, call: StructuredCall): Promise<z.infer<S>> {
   const provider = aiProvider();
-  if (!provider) throw new Error('No AI key is configured: set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in Netlify');
+  if (!provider) throw new Error('No AI key is configured: set ZAI_API_KEY (or NVIDIA_API_KEY / ANTHROPIC_API_KEY) in Netlify');
 
   const run = (signal?: AbortSignal) =>
-    provider === 'anthropic' ? anthropicStructured(schema, call, signal) : nvidiaStructured(schema, call, signal);
+    provider === 'anthropic'
+      ? anthropicStructured(schema, call, signal)
+      : openaiStructured(schema, call, provider === 'zai' ? zaiEndpoint(call) : nvidiaEndpoint(schema, call), signal);
   if (!call.deadlineMs) return run();
 
   // One deadline over everything: the SDK's timeout is per attempt and NVIDIA's
@@ -122,53 +132,48 @@ async function anthropicStructured<S extends z.ZodType>(
   return format.parse(text) as z.infer<S>;
 }
 
-/**
- * Pulls the first complete JSON object out of a chat reply. Tolerates
- * reasoning blocks, code fences and prose before or after the object.
- */
-function extractJson(text: string): unknown {
-  const body = text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
-  let start = body.indexOf('{');
-  while (start >= 0) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < body.length; i++) {
-      const c = body[i];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (c === '\\') escaped = true;
-        else if (c === '"') inString = false;
-      } else if (c === '"') inString = true;
-      else if (c === '{') depth++;
-      else if (c === '}' && --depth === 0) {
-        try {
-          return JSON.parse(body.slice(start, i + 1));
-        } catch {
-          break; // not valid JSON from here; try the next "{"
-        }
-      }
-    }
-    start = body.indexOf('{', start + 1);
-  }
-  throw new Error('no JSON object in the reply');
-}
-
-/** NVIDIA models that answered the guided request with a 400/422 (per warm instance). */
+/** Models that answered the guided request with a 400/422 (per warm instance). */
 const UNGUIDED_MODELS = new Set<string>();
 
-async function nvidiaStructured<S extends z.ZodType>(
+function nvidiaEndpoint(schema: z.ZodType, call: StructuredCall): ChatEndpoint {
+  return {
+    name: 'NVIDIA',
+    url: NVIDIA_URL,
+    key: env('NVIDIA_API_KEY')!,
+    model: call.model || env('NVIDIA_MODEL') || NVIDIA_DEFAULT_MODEL,
+    requestTimeoutMs: 180_000,
+    guidedBody: {
+      temperature: 0.1,
+      response_format: { type: 'json_schema', json_schema: { name: 'reply', schema: z.toJSONSchema(schema) } },
+    },
+  };
+}
+
+function zaiEndpoint(call: StructuredCall): ChatEndpoint {
+  const base = (env('ZAI_BASE_URL') || ZAI_DEFAULT_BASE_URL).replace(/\/+$/, '');
+  return {
+    name: 'Z.ai',
+    url: `${base}/chat/completions`,
+    key: env('ZAI_API_KEY')!,
+    model: call.model || env('ZAI_MODEL') || ZAI_DEFAULT_MODEL,
+    requestTimeoutMs: 300_000,
+    extraBody: { thinking: { type: call.effort === 'low' ? 'disabled' : 'enabled' } },
+    guidedBody: { temperature: 0.1, response_format: { type: 'json_object' } },
+  };
+}
+
+async function openaiStructured<S extends z.ZodType>(
   schema: S,
   call: StructuredCall,
+  endpoint: ChatEndpoint,
   signal?: AbortSignal
 ): Promise<z.infer<S>> {
-  const key = env('NVIDIA_API_KEY')!;
-  const model = call.model || env('NVIDIA_MODEL') || NVIDIA_DEFAULT_MODEL;
   const jsonSchema = z.toJSONSchema(schema);
   const system =
     `${call.system}\n\nReply with ONE JSON object and nothing else (no prose, no code fences). ` +
     `It must match this JSON Schema exactly; include every property, using null where a value is unknown:\n${JSON.stringify(jsonSchema)}`;
-  const maxTokens = Math.min(call.maxTokens, Number(env('NVIDIA_MAX_TOKENS')) || 8192);
+  const zai = endpoint.name === 'Z.ai';
+  const maxTokens = Math.min(call.maxTokens, Number(env(zai ? 'ZAI_MAX_TOKENS' : 'NVIDIA_MAX_TOKENS')) || (zai ? 16_000 : 8_192));
 
   // `guided` = the first try: low temperature plus constrained JSON decoding
   // through the OpenAI-standard `response_format`. (The older
@@ -178,39 +183,9 @@ async function nvidiaStructured<S extends z.ZodType>(
   // the prompt's JSON instructions, and is remembered so later calls in this
   // instance skip the wasted round trip.
   const ask = async (messages: Array<{ role: string; content: string }>, guided: boolean) => {
-    const res = await fetch(NVIDIA_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages,
-        max_tokens: maxTokens,
-        stream: false,
-        ...(guided
-          ? { temperature: 0.1, response_format: { type: 'json_schema', json_schema: { name: 'reply', schema: jsonSchema } } }
-          : {}),
-      }),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      const err = new Error(`NVIDIA API ${res.status}: ${text.slice(0, 300)}`) as Error & { status?: number };
-      err.status = res.status;
-      throw err;
-    }
-    const data = JSON.parse(text) as {
-      choices?: Array<{
-        message?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null };
-        finish_reason?: string;
-      }>;
-    };
-    const choice = data.choices?.[0];
-    if (choice?.finish_reason === 'length') throw new Error(`${call.label} was cut off (NVIDIA max_tokens ${maxTokens})`);
-    // Reasoning models sometimes leave `content` empty and put the
-    // whole answer, JSON included, in `reasoning_content`
-    const content = choice?.message?.content ?? '';
-    if (content.trim()) return content;
-    return choice?.message?.reasoning_content ?? choice?.message?.reasoning ?? '';
+    const { text, finishReason } = await chatCompletion(endpoint, messages, maxTokens, guided, signal);
+    if (finishReason === 'length') throw new Error(`${call.label} was cut off (${endpoint.name} max_tokens ${maxTokens})`);
+    return text;
   };
 
   const messages = [
@@ -218,14 +193,15 @@ async function nvidiaStructured<S extends z.ZodType>(
     { role: 'user', content: call.user },
   ];
 
-  let guided = !UNGUIDED_MODELS.has(model);
+  const unguidedKey = `${endpoint.name}:${endpoint.model}`;
+  let guided = !UNGUIDED_MODELS.has(unguidedKey);
   let reply: string;
   try {
     reply = await ask(messages, guided);
   } catch (err) {
     // Some hosted models reject response_format or temperature; fall back to plain JSON prompting
     if (guided && ((err as { status?: number }).status === 400 || (err as { status?: number }).status === 422)) {
-      UNGUIDED_MODELS.add(model);
+      UNGUIDED_MODELS.add(unguidedKey);
       guided = false;
       reply = await ask(messages, guided);
     } else {
@@ -257,7 +233,7 @@ async function nvidiaStructured<S extends z.ZodType>(
       );
     }
   }
-  throw new Error(`Could not parse ${call.label.toLowerCase()} from ${model}: ${problem}`);
+  throw new Error(`Could not parse ${call.label.toLowerCase()} from ${endpoint.model}: ${problem}`);
 }
 
 // ── Transcript → EOS meeting data ─────────────────────────────────────────
@@ -427,6 +403,7 @@ Thinking adds latency and should only be used when it will meaningfully improve 
 
   // Runs inside the page request (Netlify kills it at 60s, DB reads included),
   // so it gets a hard 45s budget and a message the owner can act on
+  const provider = aiProvider();
   const parsed = await structured(BreakdownSchema, {
     system,
     user,
@@ -434,9 +411,11 @@ Thinking adds latency and should only be used when it will meaningfully improve 
     effort: 'low',
     label: 'The breakdown',
     model:
-      aiProvider() === 'anthropic'
+      provider === 'anthropic'
         ? env('ANTHROPIC_BREAKDOWN_MODEL')?.trim() || undefined
-        : env('NVIDIA_BREAKDOWN_MODEL')?.trim() || NVIDIA_BREAKDOWN_DEFAULT_MODEL,
+        : provider === 'zai'
+          ? env('ZAI_BREAKDOWN_MODEL')?.trim() || ZAI_BREAKDOWN_DEFAULT_MODEL
+          : env('NVIDIA_BREAKDOWN_MODEL')?.trim() || NVIDIA_BREAKDOWN_DEFAULT_MODEL,
     deadlineMs: 45_000,
     timeoutMessage: 'The AI took too long to answer (45s). Try again, or pick a lower level of detail.',
   });
@@ -518,7 +497,8 @@ const ScorecardExtractionSchema = z.object({
   values: z.array(
     z.object({
       metric_id: z.string(),
-      value: z.string(),
+      // null when the model lists a metric it could not find; dropped below
+      value: z.string().nullable(),
       on_track: z.boolean().nullable(),
       notes: z.string().nullable(),
     })
@@ -557,6 +537,8 @@ ${reportText}
   // …and anything the report didn't actually contain (blank values)
   return {
     ...parsed,
-    values: parsed.values.filter((v) => known.has(v.metric_id) && String(v.value ?? '').trim() !== ''),
+    values: parsed.values.filter(
+      (v): v is typeof v & { value: string } => known.has(v.metric_id) && typeof v.value === 'string' && v.value.trim() !== ''
+    ),
   };
 }
