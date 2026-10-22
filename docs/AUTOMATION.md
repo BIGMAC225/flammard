@@ -11,7 +11,8 @@ Database, storage and sign-in are all on Netlify — see `docs/SETUP.md`. The tw
 
 | Variable | Purpose |
 |---|---|
-| `ANTHROPIC_API_KEY` | Transcript analysis and report extraction. Create at console.anthropic.com. |
+| `ZAI_API_KEY` | Recommended. Runs the AI steps (transcript analysis, report extraction) on Z.ai GLM. `AI_PROVIDER` optional. |
+| `NVIDIA_API_KEY` / `ANTHROPIC_API_KEY` | Alternative AI providers instead of Z.ai. |
 | `TAXDOME_WEBHOOK_SECRET` | Shared secret Zapier sends with each report. Generate with `openssl rand -hex 32`. |
 
 ## 2. Meeting session flow
