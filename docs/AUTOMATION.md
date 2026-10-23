@@ -87,3 +87,79 @@ Every import is logged on the Scorecard page with its status, period and any ext
 ### Timing
 
 Zapier waits up to 30 seconds for the webhook. Extraction on a typical one-to-three-page report finishes well inside that; if a very long report times out on Zapier's side, the import still completes and appears on the Scorecard page — the Zap just shows an error.
+
+## 4. Fulfillment poller (TaxDome API)
+
+The fulfillment pipeline pulls straight from the TaxDome REST API — no Zapier involved. Every hour the scheduled Netlify function `fulfillment-poll` (`0 * * * *`, UTC; scheduled functions run only on published deploys) creates an `import_runs` row and asks `/api/integrations/fulfillment-poll-run` to hand the walk to the background function `fulfillment-poll-background` (up to 15 minutes; the API walk is paced at one request per 500 ms). The walk refreshes the TaxDome reference tables (pipelines, stages, job statuses, people, clients) and writes one `job_snapshots` row per job for the day (`snapshot_date` is the America/Chicago calendar date). Everything a run did — status, `requests_made`, `jobs_written`, counts and unknown stage ids in `detail` — lands in the `import_runs` table.
+
+| Variable | Purpose |
+|---|---|
+| `TAXDOME_API_KEY`, `TAXDOME_API_BASE` | The TaxDome API key and API base URL. Already set in Netlify. |
+| `SESSION_SECRET` | Derives the signature for the route → background hand-off. Already set for sign-in. |
+| `TAXDOME_WEBHOOK_SECRET` | Reused as the Bearer secret for the trigger route — no new secret to generate. |
+
+Trigger a run by hand (a new `import_runs` row is created when no `run_id` is sent):
+
+```sh
+curl -X POST -H "Authorization: Bearer $TAXDOME_WEBHOOK_SECRET" https://<your-site>/api/integrations/fulfillment-poll-run
+```
+
+It answers `202 { ok, accepted, run_id }` and the run appears in `import_runs` a minute later; `GET` on the same URL (same header) returns the latest API run's status.
+
+## 5. Fulfillment CSV fallback (Zap 2)
+
+When the API poller can't run (or before it is turned on), the same daily snapshot arrives as a CSV: TaxDome's "Fulfillment Snapshot" R1 export. Zap 2 forwards the email to `/api/integrations/taxdome-jobs`, which parses the CSV, resolves pipelines, stages, clients and assignees by name against the reference tables and writes the day's `job_snapshots` rows (source `csv`). Rows whose pipeline/stage or account name isn't in the reference tables are skipped and listed in the run's `detail` (`unknown_stages`, `unknown_clients`, `unmatched_assignees`). A CSV run never overwrites a row the API run already wrote that day, so the two feeds can run side by side.
+
+**In Zapier:**
+
+1. **Trigger — Gmail: New Email Matching Search**, search: `from:notifications@taxdome.com subject:"Fulfillment Snapshot" has:attachment`
+2. **Action — Webhooks by Zapier: POST.**
+   - **URL:** `https://<your-site>/api/integrations/taxdome-jobs?async=1`
+   - **Payload Type:** `form`
+   - **File:** map the email's **All Attachments** field (the .zip of CSVs is unzipped in memory)
+   - **Headers:** `Authorization` = `Bearer <TAXDOME_WEBHOOK_SECRET>` — reused from the scorecard Zap, no new secret. No API key is used.
+
+The response is `202 { ok, accepted, files, run: "pending" }`; the result lands in `import_runs` (source `csv`) a minute later, and `GET` on the same URL (same header) returns the latest CSV run. The snapshot date comes from the file name's `(YYYY-MM-DD HH_mm_ss)` stamp (a UTC timestamp, read as an America/Chicago day), falling back to the CSV's `"Data extract produced by … on …"` preamble line; an email with neither is rejected with HTTP 422.
+
+**Backfill** — replay the archived daily zips/CSVs (a directory takes every `*.zip` and `*.csv` sorted by name, one run per archived date, oldest first; already-written days are skipped, so re-running is safe):
+
+```sh
+node scripts/backfill-csv.ts <file-or-directory>
+```
+
+Needs `DATABASE_URL` or `NETLIFY_DATABASE_URL` in the environment.
+
+## 6. Fulfillment rules and alerts
+
+Every day at 13:00 UTC (about 7–8 AM Central) the scheduled function `fulfillment-rules` evaluates the stall rules (implementation plan, section H) over each job's latest snapshot and writes the result to `alerts_log`; every import (API or CSV) runs the same evaluation right after its own `ok` update, guarded so a rules failure never fails the import. A job is **stuck** once it has sat in its stage longer than the stage's TaxDome limit (`stage_limit_days`) — or, with no limit, the `stall_rules` row for its mapped stage type (while `stage_type_map` is empty, every stage uses the `unmapped` row, 7/10) — and **critical** past that rule's critical threshold, which never falls at or below stuck. Stuck alerts escalate after three more days; stages mapped to `on_hold` are excluded, as are non-active jobs. Separate alerts fire for past internal deadlines and for due dates within 14 days (except `client_review_sign`, which chases by its own clock), plus the data-health alerts: no snapshot for today, a ≥20% row-count drop vs yesterday, unknown stages in the latest run.
+
+| Variable | Purpose |
+|---|---|
+| `ALERTS_WEBHOOK_URL` | A Zapier Catch Hook that receives the daily digests and the instant after-import alerts. Unset: the digests are still built and one line is logged, but nothing is sent or marked notified. |
+
+The daily run POSTs one JSON body with `Content-Type: application/json` (10-second timeout):
+
+```json
+{
+  "date": "2026-10-22",
+  "digests": [
+    {
+      "to": "Employee:12",
+      "display_name": "Dana Prep",
+      "email": "dana@example.com",
+      "summary": { "stuck_count": 3, "critical_count": 2, "wip_in_review": 1, "oldest_in_review_days": 9 },
+      "critical": [],
+      "newly_stuck": [],
+      "still_stuck": [],
+      "client_chases": [],
+      "data_health": []
+    }
+  ]
+}
+```
+
+One digest per assignee, plus `to: "unassigned"` for jobs with no assignees and `to: "leadership"` for the data-health alerts (its `data_health` array). `newly_stuck` holds stuck alerts opened today, `still_stuck` older ones, `client_chases` the alerts whose stage has the ball with the client. Snoozed alerts are left out of every section but still counted in the summary. On a 2xx every included alert is marked `last_notified_at`; on a failure nothing is marked and the next run retries.
+
+After an import, only critical-class alerts (critical, past internal deadline, due soon and the data-health types) that were not already notified today are POSTed as `{ "date": "…", "instant": [ … ] }`, one per job per day — nothing is sent when the list is empty.
+
+**Snooze** — an open alert can be snoozed (`alerts_log` status `snoozed`, `snoozed_until`, `snooze_reason`; the Fulfillment views call `snoozeAlert` / `unsnoozeAlert` in `src/lib/fulfillment-rules.ts`). A snoozed alert stays out of the digests; once `snoozed_until` passes it returns to open if the condition still holds, and it resolves when the condition is gone.

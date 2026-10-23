@@ -1,0 +1,272 @@
+---
+import Dashboard from '../../../layouts/Dashboard.astro';
+import { sql } from '../../../lib/db';
+import { daysBetween, displayName, enrich, loadJobDetail, loadPeople } from '../../../lib/fulfillment-views';
+import type { EnrichedRow, JobDetail, PersonLite } from '../../../lib/fulfillment-views';
+
+const id = Astro.params.id ?? '';
+if (!/^\d+$/.test(id)) return Astro.redirect('/fulfillment/stuck');
+
+let detail: JobDetail | null = null;
+let people: PersonLite[] = [];
+let loadError: string | null = null;
+try {
+  const db = sql();
+  detail = await loadJobDetail(db, id);
+  people = await loadPeople(db);
+} catch (err) {
+  loadError = err instanceof Error ? err.message : String(err);
+  detail = null;
+  people = [];
+}
+
+if (!loadError && !detail) Astro.response.status = 404;
+
+const latest: EnrichedRow | null = detail ? enrich([detail.latest])[0] : null;
+
+// The RAG badge tiers, matching the other fulfillment views.
+function ragBadge(row: EnrichedRow): { label: string; cls: string } {
+  if (row.rag === 'red') return { label: 'critical', cls: 'badge-overdue' };
+  if (row.rag === 'amber') return { label: 'stuck', cls: 'badge-deferred' };
+  return { label: 'on track', cls: 'badge-approved' };
+}
+
+// The job's start: the first stage interval's entry, the earliest tracked move.
+const startedAt = detail?.intervals.length ? detail.intervals[0].entered_at : null;
+
+// One bar per interval, proportional to its days. An open interval (days null)
+// is measured to the latest snapshot so it still gets a bar.
+const intervalBars = detail
+  ? detail.intervals.map((iv) => ({
+      ...iv,
+      bar_days:
+        iv.days ??
+        (iv.entered_at ? Math.max(0, daysBetween(iv.entered_at.slice(0, 10), detail.latest.snapshot_date)) : 0),
+    }))
+  : [];
+const maxIntervalDays = Math.max(1, ...intervalBars.map((iv) => iv.bar_days));
+const barWidth = (d: number) => Math.max(2, (116 * d) / maxIntervalDays);
+---
+
+<Dashboard
+  eyebrow="Fulfillment"
+  title={latest?.job_name ?? `Job ${id}`}
+  back={{ href: '/fulfillment/stuck', label: 'Stuck list' }}
+>
+  {loadError && (
+    <div class="card bg-amber-50 border-amber-200 mb-8">
+      <p class="font-semibold text-amber-900">Fulfillment tables are not available yet</p>
+      <p class="text-sm text-amber-900 mt-1">{loadError}</p>
+    </div>
+  )}
+
+  {!loadError && !detail && (
+    <div class="card text-center py-12">
+      <p class="text-lg font-medium text-ink-primary mb-2">No snapshot for job {id}</p>
+      <a href="/fulfillment/stuck" class="text-sm text-accent hover:underline">Back to the stuck list</a>
+    </div>
+  )}
+
+  {latest && detail && (
+    <div>
+      <div class="card mb-10">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-5">
+          <div>
+            <p class="stat-tile-label">Account</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.account_name ?? 'No account name'}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Pipeline</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.pipeline_title}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Stage</p>
+            <p class="text-sm text-ink-primary font-medium mt-1 flex flex-wrap items-center gap-1.5">
+              {latest.stage_title}
+              <span class={ragBadge(latest).cls}>{ragBadge(latest).label}</span>
+              {latest.ball_with === 'client' && <span class="badge-draft">client</span>}
+            </p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Days in stage</p>
+            <p class="text-sm text-ink-primary font-medium mt-1 tabular-nums">{latest.days_in_stage}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Stuck threshold</p>
+            <p class="text-sm text-ink-primary font-medium mt-1 tabular-nums">{latest.stuck} days</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Critical threshold</p>
+            <p class="text-sm text-ink-primary font-medium mt-1 tabular-nums">{latest.critical} days</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Status</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.kind ?? 'unknown'} · {latest.status_name ?? 'not set'}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Priority</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.priority ?? 'Not set'}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Assignees</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">
+              {latest.assignee_actors.length ? latest.assignee_actors.map((a) => displayName(a, people)).join(', ') : 'Unassigned'}
+            </p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Intake</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.intake_date ?? 'Not set'}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Start</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{startedAt ?? 'Not set'}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Due</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.due_date ?? 'Not set'}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Internal deadline</p>
+            <p class={`text-sm font-medium mt-1 ${latest.past_internal_deadline ? 'text-red-800' : 'text-ink-primary'}`}>
+              {latest.internal_deadline ?? 'Not set'}
+            </p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Completed at</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.completed_at ?? 'Not set'}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Moved at</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.moved_at ?? 'Not set'}</p>
+          </div>
+          <div>
+            <p class="stat-tile-label">Latest snapshot</p>
+            <p class="text-sm text-ink-primary font-medium mt-1">{latest.snapshot_date}</p>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="section-title mb-4">Alerts</h2>
+      {detail.alerts.length === 0 ? (
+        <p class="text-sm text-ink-muted mb-10">None yet.</p>
+      ) : (
+        <div class="card p-0 overflow-x-auto mb-10">
+          <table class="table-brand">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Level</th>
+                <th>Status</th>
+                <th>Opened</th>
+                <th>Snoozed until</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.alerts.map((alert) => (
+                <tr>
+                  <td class="font-medium">{alert.alert_type}</td>
+                  <td class={`text-ink-secondary ${alert.level === 'critical' ? 'text-red-800 font-medium' : ''}`}>{alert.level}</td>
+                  <td class="text-ink-secondary">{alert.status}</td>
+                  <td class="text-ink-secondary whitespace-nowrap">{alert.opened_at}</td>
+                  <td class="text-ink-secondary whitespace-nowrap">{alert.snoozed_until ?? ''}</td>
+                  <td class="text-ink-secondary">{alert.snooze_reason ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <h2 class="section-title mb-4">Stage intervals</h2>
+      {intervalBars.length === 0 ? (
+        <p class="text-sm text-ink-muted mb-10">None yet.</p>
+      ) : (
+        <div class="card p-0 overflow-x-auto mb-10">
+          <table class="table-brand">
+            <thead>
+              <tr>
+                <th>Stage</th>
+                <th>Entered</th>
+                <th>Exited</th>
+                <th>Days</th>
+                <th>Share of job time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {intervalBars.map((iv) => (
+                <tr>
+                  <td class="font-medium">{iv.stage_title}</td>
+                  <td class="text-ink-secondary whitespace-nowrap">{iv.entered_at}</td>
+                  <td class="text-ink-secondary whitespace-nowrap">{iv.exited_at ?? 'Open'}</td>
+                  <td class="text-ink-secondary tabular-nums">{iv.days ?? ''}</td>
+                  <td>
+                    <svg width="120" height="12" viewBox="0 0 120 12" role="img" aria-label={`${iv.stage_title}: ${iv.bar_days} days`}>
+                      <rect x="0" y="2" width={barWidth(iv.bar_days)} height="8" rx="2" class="fill-accent" fill-opacity={iv.days == null ? 0.5 : 1} />
+                    </svg>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <h2 class="section-title mb-4">Events</h2>
+      {detail.events.length === 0 ? (
+        <p class="text-sm text-ink-muted mb-10">None yet.</p>
+      ) : (
+        <div class="card p-0 overflow-x-auto mb-10">
+          <table class="table-brand">
+            <thead>
+              <tr>
+                <th>At</th>
+                <th>Type</th>
+                <th>From stage</th>
+                <th>To stage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.events.map((event) => (
+                <tr>
+                  <td class="text-ink-secondary whitespace-nowrap">{event.at}</td>
+                  <td class="font-medium">{event.event_type}</td>
+                  <td class="text-ink-secondary">{event.from_stage ?? ''}</td>
+                  <td class="text-ink-secondary">{event.to_stage ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <h2 class="section-title mb-4">Snapshot history</h2>
+      {detail.history.length === 0 ? (
+        <p class="text-sm text-ink-muted">None yet.</p>
+      ) : (
+        <div class="card p-0 overflow-x-auto">
+          <table class="table-brand">
+            <thead>
+              <tr>
+                <th>Snapshot date</th>
+                <th>Stage</th>
+                <th>Days in stage</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.history.map((row) => (
+                <tr>
+                  <td class="text-ink-secondary whitespace-nowrap">{row.snapshot_date}</td>
+                  <td class="font-medium">{row.stage_title}</td>
+                  <td class="text-ink-secondary tabular-nums">{row.days_in_stage}</td>
+                  <td class="text-ink-secondary">{row.source}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )}
+</Dashboard>

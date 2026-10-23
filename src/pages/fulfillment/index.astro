@@ -1,0 +1,232 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { sql } from '../../lib/db';
+import { todayLocal } from '../../lib/dates';
+import {
+  enrich,
+  loadViewRows,
+  loadWeeklyEvents,
+  overview,
+  overviewTotals,
+  weeklyFlow,
+} from '../../lib/fulfillment-views';
+import type { EnrichedRow, EventLite } from '../../lib/fulfillment-views';
+
+const today = todayLocal();
+// weeklyFlow buckets the 13 Monday-starting weeks ending this week, so fetch
+// every event from 91 days back and let it drop what falls outside the window.
+const since = new Date(Date.parse(`${today}T00:00:00Z`) - 91 * 86_400_000).toISOString().slice(0, 10);
+
+let rows: EnrichedRow[] = [];
+let events: EventLite[] = [];
+let loadError: string | null = null;
+try {
+  const db = sql();
+  rows = enrich(await loadViewRows(db));
+  events = await loadWeeklyEvents(db, since);
+} catch (err) {
+  loadError = err instanceof Error ? err.message : String(err);
+}
+
+const ov = overview(rows);
+const totals = overviewTotals(ov);
+const flow = weeklyFlow(events, today, 13);
+const thisWeek = flow[flow.length - 1];
+const lastWeek = flow[flow.length - 2];
+const flowMax = Math.max(1, ...flow.map((w) => Math.max(w.arrivals, w.completions)));
+
+// Mini bar chart geometry: one slot per week, arrivals left, completions right.
+const chartW = 640;
+const chartH = 200;
+const padL = 34;
+const padR = 10;
+const padT = 14;
+const padB = 36;
+const plotW = chartW - padL - padR;
+const plotH = chartH - padT - padB;
+const slotW = plotW / flow.length;
+const barW = Math.min(16, slotW / 3);
+const yBar = (v: number) => padT + plotH - (v / flowMax) * plotH;
+const xBar = (i: number, second: boolean) => padL + i * slotW + slotW / 2 + (second ? 1 : -barW - 1);
+const gridValues = [...new Set([0, Math.round(flowMax / 2), flowMax])];
+---
+
+<Dashboard
+  eyebrow="Fulfillment"
+  title="Fulfillment"
+  description="Every client job in every TaxDome pipeline: where it sits, how long it has sat there, what is stuck."
+>
+  {loadError && (
+    <div class="card bg-amber-50 border-amber-200 mb-8">
+      <p class="font-semibold text-amber-900">Fulfillment tables are not available yet</p>
+      <p class="text-sm text-amber-900 mt-1">{loadError}</p>
+    </div>
+  )}
+
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-10">
+    <div class="stat-tile">
+      <p class="stat-tile-label">WIP</p>
+      <p class="stat-tile-value">{totals.wip}</p>
+      <p class="stat-tile-hint">active jobs across all pipelines</p>
+    </div>
+    <div class={`stat-tile ${totals.stuck > 0 ? 'bg-amber-50 border-amber-200' : ''}`}>
+      <p class="stat-tile-label">Stuck</p>
+      <p class={`stat-tile-value ${totals.stuck > 0 ? 'text-amber-900' : ''}`}>{totals.stuck}</p>
+      <p class="stat-tile-hint">at or past the stuck threshold</p>
+    </div>
+    <div class={`stat-tile ${totals.critical > 0 ? 'bg-red-50 border-red-200' : ''}`}>
+      <p class="stat-tile-label">Critical</p>
+      <p class={`stat-tile-value ${totals.critical > 0 ? 'text-red-800' : ''}`}>{totals.critical}</p>
+      <p class="stat-tile-hint">at or past the critical threshold</p>
+    </div>
+    <div class="stat-tile">
+      <p class="stat-tile-label">In review</p>
+      <p class="stat-tile-value">{totals.wip_in_review}</p>
+      <p class="stat-tile-hint">oldest {totals.oldest_days} days</p>
+    </div>
+  </div>
+
+  {!loadError && rows.length === 0 && (
+    <div class="card text-center py-12 mb-10">
+      <p class="text-lg font-medium text-ink-primary mb-2">No snapshots yet</p>
+      <p class="text-sm text-ink-secondary mb-1">No client job snapshots have been imported yet, so there is nothing to show.</p>
+      <p class="text-sm text-ink-muted">Run the fulfillment poller to bring jobs in: docs/AUTOMATION.md, section 4.</p>
+    </div>
+  )}
+
+  {rows.length > 0 && (
+    <div class="mb-10">
+      <h2 class="section-title mb-4">Pipelines</h2>
+      <div class="card p-0 overflow-hidden">
+        <table class="table-brand">
+          <thead>
+            <tr>
+              <th>Pipeline</th>
+              <th>WIP</th>
+              <th>Stuck</th>
+              <th>Critical</th>
+              <th>In review</th>
+              <th>Oldest days</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ov.map((p) => (
+              <tr>
+                <td>
+                  <a
+                    href={`/fulfillment/board?pipeline=${String(p.pipeline_id)}`}
+                    class="font-medium text-ink-primary hover:text-accent transition-colors"
+                  >
+                    {p.title}
+                  </a>
+                </td>
+                <td class="text-ink-secondary tabular-nums">{p.wip}</td>
+                <td class={`tabular-nums ${p.stuck > 0 ? 'text-amber-900 font-medium' : 'text-ink-secondary'}`}>{p.stuck}</td>
+                <td class={`tabular-nums ${p.critical > 0 ? 'text-red-800 font-medium' : 'text-ink-secondary'}`}>{p.critical}</td>
+                <td class="text-ink-secondary tabular-nums">{p.wip_in_review}</td>
+                <td class="text-ink-secondary tabular-nums">{p.oldest_days}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
+
+  {rows.length > 0 && (
+    <div class="mb-10">
+      <h2 class="section-title mb-4">This week vs last week</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+        <div class="stat-tile">
+          <p class="stat-tile-label">Arrivals this week</p>
+          <p class="stat-tile-value">{thisWeek.arrivals}</p>
+        </div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">Completions this week</p>
+          <p class="stat-tile-value">{thisWeek.completions}</p>
+        </div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">Arrivals last week</p>
+          <p class="stat-tile-value">{lastWeek.arrivals}</p>
+        </div>
+        <div class="stat-tile">
+          <p class="stat-tile-label">Completions last week</p>
+          <p class="stat-tile-value">{lastWeek.completions}</p>
+        </div>
+      </div>
+      <div class="card mb-4">
+        <div class="flex items-center gap-4 mb-4 text-xs font-semibold text-ink-secondary">
+          <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-accent"></span> Arrivals</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-mint-500"></span> Completions</span>
+        </div>
+        <svg
+          viewBox={`0 0 ${chartW} ${chartH}`}
+          class="w-full"
+          role="img"
+          aria-label="Weekly arrivals and completions over the last 13 weeks"
+        >
+          {gridValues.map((v) => (
+            <g>
+              <line x1={padL} y1={yBar(v)} x2={chartW - padR} y2={yBar(v)} class="stroke-line" stroke-width="1" />
+              <text x={padL - 6} y={yBar(v) + 3} text-anchor="end" font-size="10" class="fill-ink-muted">{v}</text>
+            </g>
+          ))}
+          {flow.map((w, i) => (
+            <g>
+              <rect
+                x={xBar(i, false)}
+                y={yBar(w.arrivals)}
+                width={barW}
+                height={padT + plotH - yBar(w.arrivals)}
+                rx="2"
+                class="fill-accent"
+              />
+              <rect
+                x={xBar(i, true)}
+                y={yBar(w.completions)}
+                width={barW}
+                height={padT + plotH - yBar(w.completions)}
+                rx="2"
+                class="fill-mint-500"
+              />
+              {i % 2 === 0 && (
+                <text x={padL + i * slotW + slotW / 2} y={chartH - 12} text-anchor="middle" font-size="9" class="fill-ink-muted">
+                  {w.week_start.slice(5)}
+                </text>
+              )}
+            </g>
+          ))}
+        </svg>
+      </div>
+      <div class="card p-0 overflow-hidden">
+        <table class="table-brand">
+          <thead>
+            <tr>
+              <th>Week of</th>
+              <th>Arrivals</th>
+              <th>Completions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {flow.map((w) => (
+              <tr>
+                <td class="text-ink-secondary">{w.week_start}</td>
+                <td class="text-ink-secondary tabular-nums">{w.arrivals}</td>
+                <td class="text-ink-secondary tabular-nums">{w.completions}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
+
+  <div class="flex flex-wrap gap-2">
+    <a href="/fulfillment/board" class="btn-secondary text-sm">Board</a>
+    <a href="/fulfillment/stuck" class="btn-secondary text-sm">Stuck list</a>
+    <a href="/fulfillment/people" class="btn-secondary text-sm">People</a>
+    <a href="/fulfillment/waiting" class="btn-secondary text-sm">Waiting on client</a>
+    <a href="/fulfillment/flow" class="btn-secondary text-sm">Flow</a>
+    <a href="/fulfillment/cycle" class="btn-secondary text-sm">Cycle time</a>
+  </div>
+</Dashboard>

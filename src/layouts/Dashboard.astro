@@ -24,11 +24,14 @@ const NAV = [
   { href: '/dashboard/issues', label: 'Issues' },
   { href: '/dashboard/scorecard', label: 'Scorecard' },
   { href: '/dashboard/register', label: 'Register' },
+  { href: '/fulfillment', label: 'Fulfillment' },
 ];
 const path = Astro.url.pathname;
 const team = currentTeam(Astro.cookies);
 const switchNext = encodeURIComponent(path + Astro.url.search);
 const principal = Astro.locals.principal;
+// Fulfillment is role-gated: principals who may not see it get no nav link.
+const nav = NAV.filter((item) => item.href !== '/fulfillment' || can(principal, 'fulfillment.view'));
 const teamIds = principal ? allowedTeams(principal) : TEAMS.map((t) => t.id);
 const visibleTeams = TEAMS.filter((t) => teamIds.includes(t.id));
 
@@ -78,7 +81,7 @@ const hasActions = Astro.slots.has('actions');
         </div>
 
         <nav class="hidden md:flex items-center gap-0.5">
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <a
               href={item.href}
               class={`px-3 py-1.5 rounded-lg text-[13px] font-semibold transition-colors ${
@@ -136,7 +139,7 @@ const hasActions = Astro.slots.has('actions');
 
       <!-- Compact nav on small screens -->
       <nav class="md:hidden flex gap-1 overflow-x-auto px-4 pb-2 -mt-1">
-        {NAV.map((item) => (
+        {nav.map((item) => (
           <a
             href={item.href}
             class={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${

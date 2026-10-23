@@ -1,0 +1,244 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { sql } from '../../lib/db';
+import {
+  agingPoints,
+  board,
+  displayName,
+  enrich,
+  loadPeople,
+  loadPipelines,
+  loadStages,
+  loadViewRows,
+} from '../../lib/fulfillment-views';
+import type {
+  AgingStage,
+  BoardColumn,
+  EnrichedRow,
+  PersonLite,
+  PipelineLite,
+  Rag,
+  StageLite,
+} from '../../lib/fulfillment-views';
+
+let pipelines: PipelineLite[] = [];
+let selected: PipelineLite | null = null;
+let stages: StageLite[] = [];
+let rows: EnrichedRow[] = [];
+let people: PersonLite[] = [];
+let loadError: string | null = null;
+try {
+  const db = sql();
+  pipelines = await loadPipelines(db);
+  people = await loadPeople(db);
+  const wanted = Astro.url.searchParams.get('pipeline');
+  selected = pipelines.find((p) => String(p.id) === wanted) ?? pipelines[0] ?? null;
+  if (selected) {
+    stages = await loadStages(db, selected.id);
+    rows = enrich(await loadViewRows(db, { pipelineId: selected.id }));
+  }
+} catch (err) {
+  loadError = err instanceof Error ? err.message : String(err);
+  pipelines = [];
+  selected = null;
+  stages = [];
+  rows = [];
+  people = [];
+}
+
+// Columns and aging series both come back in stage_order; never re-sort here.
+const columns: BoardColumn[] = board(stages, rows);
+const aging: AgingStage[] = agingPoints(rows, stages);
+// agingPoints carries no per-stage oldest, so shape it here for the chart table.
+const agingRows = aging.map((s) => ({
+  stage_title: s.stage_title,
+  stuck: s.stuck,
+  critical: s.critical,
+  jobs: s.points.length,
+  oldest: s.points.reduce((max, p) => Math.max(max, p.days_in_stage), 0),
+}));
+
+// The y scale tops out at the highest point, the highest critical threshold or
+// 14 days, whichever is larger.
+const agingMax = Math.max(14, ...aging.flatMap((s) => [s.critical, ...s.points.map((p) => p.days_in_stage)]));
+const RAG_FILL: Record<Rag, string> = { green: 'fill-mint-500', amber: 'fill-amber-500', red: 'fill-red-500' };
+
+// Aging chart geometry: one slot per stage in board() order, ticks at the
+// stage's stuck and critical thresholds, one dot per job.
+const slotW = 76;
+const padL = 36;
+const padR = 12;
+const padT = 16;
+const padB = 52;
+const chartH = 240;
+const chartW = padL + padR + Math.max(1, aging.length) * slotW;
+const plotH = chartH - padT - padB;
+const yAge = (d: number) => padT + plotH * (1 - d / agingMax);
+const xStage = (i: number) => padL + slotW / 2 + i * slotW;
+const gridValues = [...new Set([0, Math.round(agingMax / 2), agingMax])];
+---
+
+<Dashboard
+  eyebrow="Fulfillment"
+  title="Pipeline board"
+  description={selected ? `Every job in ${selected.title}: where it sits, how long it has sat in its stage.` : 'Every job in every pipeline: where it sits, how long it has sat in its stage.'}
+  back={{ href: '/fulfillment', label: 'Fulfillment' }}
+>
+  {loadError && (
+    <div class="card bg-amber-50 border-amber-200 mb-8">
+      <p class="font-semibold text-amber-900">Fulfillment tables are not available yet</p>
+      <p class="text-sm text-amber-900 mt-1">{loadError}</p>
+    </div>
+  )}
+
+  {!loadError && pipelines.length === 0 && (
+    <div class="card text-center py-12">
+      <p class="text-lg font-medium text-ink-primary mb-2">No pipelines yet</p>
+      <p class="text-sm text-ink-secondary mb-1">No TaxDome pipelines have been imported yet, so there is no board to show.</p>
+      <p class="text-sm text-ink-muted">Run the fulfillment poller to bring them in: docs/AUTOMATION.md, section 4.</p>
+    </div>
+  )}
+
+  {selected && (
+    <div>
+      <div class="flex flex-wrap gap-2 mb-6">
+        {pipelines.map((p) => (
+          <a
+            href={`/fulfillment/board?pipeline=${String(p.id)}`}
+            class={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              String(p.id) === String(selected?.id) ? 'bg-accent text-white' : 'bg-bg-elevated text-ink-secondary hover:text-ink-primary'
+            }`}
+            aria-current={String(p.id) === String(selected?.id) ? 'page' : undefined}
+          >
+            {p.title}
+          </a>
+        ))}
+      </div>
+
+      {rows.length === 0 && (
+        <div class="card text-center py-8 mb-6">
+          <p class="text-sm text-ink-secondary">
+            No active jobs in this pipeline yet. If none have been imported, run the fulfillment poller: docs/AUTOMATION.md, section 4.
+          </p>
+        </div>
+      )}
+
+      {columns.length === 0 ? (
+        <div class="card text-center py-8 mb-10">
+          <p class="text-sm text-ink-secondary">This pipeline has no stages yet.</p>
+        </div>
+      ) : (
+        <div class="flex gap-4 overflow-x-auto pb-2 mb-10">
+          {columns.map((col) => (
+            <div class={`w-64 shrink-0 rounded-2xl border border-line/70 p-3 ${col.client_typed ? 'bg-bg-elevated' : 'bg-bg-surface'}`}>
+              <div class="flex items-start justify-between gap-2 mb-3">
+                <div>
+                  <p class="text-sm font-semibold text-ink-primary">{col.stage.title}</p>
+                  <p class="text-xs text-ink-muted mt-0.5">
+                    {col.count} {col.count === 1 ? 'job' : 'jobs'}{col.count > 0 ? ` · oldest ${col.oldest} d` : ''}
+                  </p>
+                </div>
+                {col.client_typed && <span class="badge-draft">client</span>}
+              </div>
+              <div class="space-y-2">
+                {col.count === 0 ? (
+                  <p class="text-xs text-ink-muted text-center py-2">no jobs</p>
+                ) : (
+                  col.cards.map((row) => (
+                    <div class={`rounded-xl border border-line p-3 ${row.rag === 'red' ? 'bg-red-50' : row.rag === 'amber' ? 'bg-amber-50' : 'bg-bg-surface'}`}>
+                      <a
+                        href={`/fulfillment/job/${String(row.job_id)}`}
+                        class="text-sm font-medium text-ink-primary hover:text-accent transition-colors"
+                      >
+                        {row.job_name ?? `Job ${String(row.job_id)}`}
+                      </a>
+                      {(row.rag !== 'green' || row.ball_with === 'client') && (
+                        <div class="flex flex-wrap gap-1 mt-1.5">
+                          {row.rag === 'red' && <span class="badge-overdue">critical</span>}
+                          {row.rag === 'amber' && <span class="badge-deferred">stuck</span>}
+                          {row.ball_with === 'client' && <span class="badge-draft">client</span>}
+                        </div>
+                      )}
+                      <p class="text-xs text-ink-muted mt-1.5">
+                        {row.account_name ?? 'No account name'} · {row.days_in_stage} d in stage
+                      </p>
+                      <p class="text-xs text-ink-muted mt-0.5">
+                        {row.assignee_actors.length ? row.assignee_actors.map((a) => displayName(a, people)).join(', ') : 'Unassigned'}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {aging.length > 0 && (
+        <div>
+          <h2 class="section-title mb-4">Aging by stage</h2>
+          <div class="card mb-4 overflow-x-auto">
+            <div class="flex flex-wrap items-center gap-4 mb-4 text-xs font-semibold text-ink-secondary">
+              <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-mint-500"></span> On track</span>
+              <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Stuck</span>
+              <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-500"></span> Critical</span>
+              <span class="inline-flex items-center gap-1.5"><span class="w-4 h-0.5 rounded-full bg-amber-500"></span> Stuck threshold</span>
+              <span class="inline-flex items-center gap-1.5"><span class="w-4 h-0.5 rounded-full bg-red-500"></span> Critical threshold</span>
+            </div>
+            <svg
+              width={chartW}
+              height={chartH}
+              viewBox={`0 0 ${chartW} ${chartH}`}
+              role="img"
+              aria-label="Days in stage per job for each stage of this pipeline"
+            >
+              {gridValues.map((v) => (
+                <g>
+                  <line x1={padL} y1={yAge(v)} x2={chartW - padR} y2={yAge(v)} class="stroke-line" stroke-width="1" />
+                  <text x={padL - 6} y={yAge(v) + 3} text-anchor="end" font-size="10" class="fill-ink-muted">{v}</text>
+                </g>
+              ))}
+              {aging.map((s, i) => (
+                <g>
+                  <line x1={xStage(i) - 22} y1={yAge(s.stuck)} x2={xStage(i) + 22} y2={yAge(s.stuck)} class="stroke-amber-500" stroke-width="2.5" />
+                  <line x1={xStage(i) - 22} y1={yAge(s.critical)} x2={xStage(i) + 22} y2={yAge(s.critical)} class="stroke-red-500" stroke-width="2.5" />
+                  {s.points.map((p, j) => (
+                    <circle cx={xStage(i) + ((j % 3) - 1) * 8} cy={yAge(p.days_in_stage)} r="4" class={RAG_FILL[p.rag]} />
+                  ))}
+                  <text x={xStage(i)} y={chartH - 30} text-anchor="middle" font-size="10" class="fill-ink-secondary">{s.stage_title}</text>
+                  <text x={xStage(i)} y={chartH - 16} text-anchor="middle" font-size="9" class="fill-ink-muted">
+                    {s.points.length} {s.points.length === 1 ? 'job' : 'jobs'}
+                  </text>
+                </g>
+              ))}
+            </svg>
+          </div>
+          <div class="card p-0 overflow-hidden">
+            <table class="table-brand">
+              <thead>
+                <tr>
+                  <th>Stage</th>
+                  <th>Stuck days</th>
+                  <th>Critical days</th>
+                  <th>Jobs</th>
+                  <th>Oldest</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agingRows.map((s) => (
+                  <tr>
+                    <td class="font-medium">{s.stage_title}</td>
+                    <td class="text-ink-secondary tabular-nums">{s.stuck}</td>
+                    <td class="text-ink-secondary tabular-nums">{s.critical}</td>
+                    <td class="text-ink-secondary tabular-nums">{s.jobs}</td>
+                    <td class="text-ink-secondary tabular-nums">{s.oldest}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )}
+</Dashboard>

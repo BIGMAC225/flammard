@@ -1,0 +1,11 @@
+Fulfillment Snapshot (Job Details Report)
+Filters: Pipeline is any; Status is not archived
+
+Data extract produced by Test User (1) on 10/22/2026 23:30 UTC
+"Job Id","Job Name","Account Name","Account Tag","Pipeline","Pipeline Stage","Pipeline Stage Order","Job Assignee","Job Priority","Job Intake Date","Job Start Date","Job Due Date","Job Internal Deadline","Job Days In Current Stage","Job Is Archived"
+"9001","1040 Test Return","Acme Test LLC","Individual","Tax Preparation  - No Deposit Requested","Awaiting Documents","2","Jane Example","High","2026-09-20","2026-09-25","2026-11-15","2026-10-30","5","FALSE"
+"9002","Amended 2023 Return, State + Federal","Beta Test LLC","Business","Tax Preparation  - No Deposit Requested","In Preparation","3","Jane Example, John Sample","Low","9/15/2026","10/1/2026","11/15/2026","","1,234","FALSE"
+"9003","Q3 Cleanup","Gamma Test LLC","","Bookkeeping","Monthly Review","4","","","2026-07-01","","10/31/2026","","12","FALSE"
+"9004","September Books","Delta Test LLC","Business","Bookkeeping","Monthly Review","4","John Sample","Normal","2026-09-01","2026-09-05","2026-10-05","2026-09-28","0","FALSE"
+"9005","2026 Estimated Payments","Epsilon Test LLC","Individual","Tax Preparation  - No Deposit Requested","Client Review","5","Alex Sample","Medium","10/5/2026","10/10/2026","12/15/2026","","45","FALSE"
+"9006","Payroll Reconciliation","Zeta Test LLC","","Bookkeeping","Monthly Review","4","","","2026-10-01","2026-10-03","2026-10-31","","3","FALSE"

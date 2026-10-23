@@ -1,0 +1,96 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { sql } from '../../lib/db';
+import { displayName, enrich, loadPeople, loadViewRows, waitingOnClient } from '../../lib/fulfillment-views';
+import type { EnrichedRow, PersonLite } from '../../lib/fulfillment-views';
+
+let rows: EnrichedRow[] = [];
+let people: PersonLite[] = [];
+let loadError: string | null = null;
+try {
+  const db = sql();
+  rows = waitingOnClient(enrich(await loadViewRows(db)));
+  people = await loadPeople(db);
+} catch (err) {
+  loadError = err instanceof Error ? err.message : String(err);
+  rows = [];
+  people = [];
+}
+
+// The RAG badge every fulfillment view agrees on: red critical, amber stuck,
+// green on track.
+function ragBadge(row: EnrichedRow): { label: string; cls: string } {
+  if (row.rag === 'red') return { label: 'critical', cls: 'badge-overdue' };
+  if (row.rag === 'amber') return { label: 'stuck', cls: 'badge-deferred' };
+  return { label: 'on track', cls: 'badge-approved' };
+}
+---
+
+<Dashboard
+  eyebrow="Fulfillment"
+  title="Waiting on client"
+  description="Jobs sitting in a client-side stage, oldest first; which clients to chase."
+  back={{ href: '/fulfillment', label: 'Fulfillment' }}
+>
+  {loadError && (
+    <div class="card bg-amber-50 border-amber-200 mb-8">
+      <p class="font-semibold text-amber-900">Fulfillment tables are not available yet</p>
+      <p class="text-sm text-amber-900 mt-1">{loadError}</p>
+    </div>
+  )}
+
+  {!loadError && rows.length === 0 && (
+    <div class="card text-center py-12">
+      <p class="text-lg font-medium text-ink-primary mb-2">Nothing is marked as waiting on the client.</p>
+      <p class="text-sm text-ink-secondary mb-1">Once plans/stage-type-map.csv is loaded into stage_type_map, client-side stages appear here.</p>
+      <p class="text-sm text-ink-muted">Until then every stage resolves to the unmapped rule, whose ball is with the firm, so no job counts as client-side.</p>
+    </div>
+  )}
+
+  {rows.length > 0 && (
+    <div class="card p-0 overflow-x-auto">
+      <table class="table-brand">
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th>Job</th>
+            <th>Pipeline</th>
+            <th>Stage</th>
+            <th>Days in stage</th>
+            <th>Stuck threshold</th>
+            <th>Days to due</th>
+            <th>Assignees</th>
+            <th>Severity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr class={row.rag === 'red' ? 'bg-red-50' : row.rag === 'amber' ? 'bg-amber-50' : ''}>
+              <td class="font-medium text-ink-primary whitespace-nowrap">{row.account_name ?? 'No account name'}</td>
+              <td>
+                <a
+                  href={`/fulfillment/job/${String(row.job_id)}`}
+                  class="font-medium text-ink-primary hover:text-accent transition-colors"
+                >
+                  {row.job_name ?? `Job ${String(row.job_id)}`}
+                </a>
+              </td>
+              <td class="text-ink-secondary whitespace-nowrap">{row.pipeline_title}</td>
+              <td class="text-ink-secondary whitespace-nowrap">{row.stage_title}</td>
+              <td class={`tabular-nums whitespace-nowrap ${row.rag === 'red' ? 'text-red-800 font-medium' : row.rag === 'amber' ? 'text-amber-900 font-medium' : 'text-ink-secondary'}`}>{row.days_in_stage}</td>
+              <td class="text-ink-secondary tabular-nums">{row.stuck}</td>
+              <td class="text-ink-secondary tabular-nums">{row.days_to_due ?? ''}</td>
+              <td class="text-ink-secondary">{row.assignee_actors.length ? row.assignee_actors.map((a) => displayName(a, people)).join(', ') : 'Unassigned'}</td>
+              <td>
+                <span class="inline-flex gap-1">
+                  <span class={ragBadge(row).cls}>{ragBadge(row).label}</span>
+                  <span class="badge-draft">client</span>
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )}
+</Dashboard>

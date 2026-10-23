@@ -1,0 +1,146 @@
+{
+  "today": "2026-10-22",
+  "pipelines": [
+    { "id": 2, "title": "Advisory 2026" },
+    { "id": 1, "title": "Tax Prep 2026" }
+  ],
+  "stages": [
+    { "id": 10, "pipeline_id": 1, "title": "Review", "stage_order": 3, "stage_limit_days": null },
+    { "id": 11, "pipeline_id": 1, "title": "Intake", "stage_order": 1, "stage_limit_days": null },
+    { "id": 13, "pipeline_id": 1, "title": "Delivery", "stage_order": 4, "stage_limit_days": null },
+    { "id": 14, "pipeline_id": 1, "title": "Preparation", "stage_order": 2, "stage_limit_days": 3 },
+    { "id": 21, "pipeline_id": 2, "title": "Monthly Close", "stage_order": 1, "stage_limit_days": null },
+    { "id": 22, "pipeline_id": 2, "title": "Client Documents", "stage_order": 2, "stage_limit_days": null },
+    { "id": 23, "pipeline_id": 2, "title": "Onboarding", "stage_order": 3, "stage_limit_days": null }
+  ],
+  "rows": [
+    {
+      "job_id": 101, "job_name": "Acme 1040", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 11, "stage_title": "Intake", "stage_order": 1, "snapshot_date": "2026-10-22",
+      "days_in_stage": 2, "moved_at": "2026-10-20T15:30:00Z", "due_date": null, "internal_deadline": null,
+      "intake_date": "2026-10-20", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Employee:12"], "client_id": 301, "account_name": "Acme LLC",
+      "stage_type": "unmapped", "ball_with": "firm", "stage_limit_days": null, "stuck_days": 7, "critical_days": 10
+    },
+    {
+      "job_id": 102, "job_name": "Beta 1120S", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 11, "stage_title": "Intake", "stage_order": 1, "snapshot_date": "2026-10-22",
+      "days_in_stage": 8, "moved_at": "2026-10-14T15:30:00Z", "due_date": null, "internal_deadline": null,
+      "intake_date": "2026-10-14", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": "high", "assignee_actors": ["Employee:12"], "client_id": 302, "account_name": "Beta LLC",
+      "stage_type": "unmapped", "ball_with": "firm", "stage_limit_days": null, "stuck_days": 7, "critical_days": 10
+    },
+    {
+      "job_id": 103, "job_name": "Gamma 1065", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 14, "stage_title": "Preparation", "stage_order": 2, "snapshot_date": "2026-10-22",
+      "days_in_stage": 9, "moved_at": "2026-10-13T15:30:00Z", "due_date": null, "internal_deadline": "2026-10-10",
+      "intake_date": "2026-09-28", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Employee:12", "Employee:14"], "client_id": 303, "account_name": "Gamma LLC",
+      "stage_type": "unmapped", "ball_with": "firm", "stage_limit_days": 3, "stuck_days": 7, "critical_days": 10
+    },
+    {
+      "job_id": 104, "job_name": "Delta 1040", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 10, "stage_title": "Review", "stage_order": 3, "snapshot_date": "2026-10-22",
+      "days_in_stage": 12, "moved_at": "2026-10-10T15:30:00Z", "due_date": null, "internal_deadline": null,
+      "intake_date": "2026-09-20", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Employee:14"], "client_id": 304, "account_name": "Delta LLC",
+      "stage_type": "review", "ball_with": "firm", "stage_limit_days": null, "stuck_days": 5, "critical_days": 10
+    },
+    {
+      "job_id": 105, "job_name": "Epsilon 1040", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 10, "stage_title": "Review", "stage_order": 3, "snapshot_date": "2026-10-22",
+      "days_in_stage": 2, "moved_at": "2026-10-20T15:30:00Z", "due_date": "2026-10-27", "internal_deadline": null,
+      "intake_date": "2026-10-06", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": [], "client_id": 305, "account_name": "Epsilon LLC",
+      "stage_type": "review", "ball_with": "firm", "stage_limit_days": null, "stuck_days": 5, "critical_days": 10
+    },
+    {
+      "job_id": 106, "job_name": "Zeta 1120", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 13, "stage_title": "Delivery", "stage_order": 4, "snapshot_date": "2026-10-22",
+      "days_in_stage": 1, "moved_at": "2026-10-21T15:30:00Z", "due_date": null, "internal_deadline": null,
+      "intake_date": "2026-10-01", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Employee:14"], "client_id": 306, "account_name": "Zeta LLC",
+      "stage_type": "delivery", "ball_with": "firm", "stage_limit_days": null, "stuck_days": 3, "critical_days": 7
+    },
+    {
+      "job_id": 107, "job_name": "Eta 1040", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 11, "stage_title": "Intake", "stage_order": 1, "snapshot_date": "2026-10-22",
+      "days_in_stage": 15, "moved_at": "2026-10-07T15:30:00Z", "due_date": null, "internal_deadline": "2026-10-20",
+      "intake_date": "2026-10-07", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": "high", "assignee_actors": ["Employee:12"], "client_id": 307, "account_name": "Eta LLC",
+      "stage_type": "unmapped", "ball_with": "firm", "stage_limit_days": null, "stuck_days": 7, "critical_days": 10
+    },
+    {
+      "job_id": 108, "job_name": "Theta 990", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 11, "stage_title": "Intake", "stage_order": 1, "snapshot_date": "2026-10-22",
+      "days_in_stage": 3, "moved_at": "2026-10-19T15:30:00Z", "due_date": null, "internal_deadline": "2026-10-01",
+      "intake_date": "2026-10-19", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Employee:14"], "client_id": 308, "account_name": "Theta LLC",
+      "stage_type": "unmapped", "ball_with": "firm", "stage_limit_days": null, "stuck_days": 7, "critical_days": 10
+    },
+    {
+      "job_id": 109, "job_name": "Iota 1040", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 14, "stage_title": "Preparation", "stage_order": 2, "snapshot_date": "2026-10-22",
+      "days_in_stage": 4, "moved_at": "2026-10-18T15:30:00Z", "due_date": null, "internal_deadline": null,
+      "intake_date": "2026-10-05", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Employee:12"], "client_id": 309, "account_name": "Iota LLC",
+      "stage_type": "unmapped", "ball_with": "firm", "stage_limit_days": 3, "stuck_days": 7, "critical_days": 10
+    },
+    {
+      "job_id": 110, "job_name": "Kappa 1040", "pipeline_id": 1, "pipeline_title": "Tax Prep 2026",
+      "stage_id": 14, "stage_title": "Preparation", "stage_order": 2, "snapshot_date": "2026-10-22",
+      "days_in_stage": 3, "moved_at": "2026-10-19T15:30:00Z", "due_date": null, "internal_deadline": null,
+      "intake_date": "2026-10-02", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Owner:3"], "client_id": 310, "account_name": "Kappa LLC",
+      "stage_type": "unmapped", "ball_with": "firm", "stage_limit_days": 3, "stuck_days": 7, "critical_days": 10
+    },
+    {
+      "job_id": 201, "job_name": "Lambda Advisory Q4", "pipeline_id": 2, "pipeline_title": "Advisory 2026",
+      "stage_id": 22, "stage_title": "Client Documents", "stage_order": 2, "snapshot_date": "2026-10-22",
+      "days_in_stage": 6, "moved_at": "2026-10-16T15:30:00Z", "due_date": null, "internal_deadline": null,
+      "intake_date": "2026-10-16", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Employee:14"], "client_id": 311, "account_name": "Lambda LLC",
+      "stage_type": "documents", "ball_with": "client", "stage_limit_days": null, "stuck_days": 14, "critical_days": 30
+    },
+    {
+      "job_id": 202, "job_name": "Mu Advisory Q4", "pipeline_id": 2, "pipeline_title": "Advisory 2026",
+      "stage_id": 21, "stage_title": "Monthly Close", "stage_order": 1, "snapshot_date": "2026-10-22",
+      "days_in_stage": 7, "moved_at": "2026-10-15T15:30:00Z", "due_date": null, "internal_deadline": null,
+      "intake_date": "2026-10-01", "completed_at": null, "kind": "active", "status_name": "In Progress",
+      "priority": null, "assignee_actors": ["Employee:12"], "client_id": 312, "account_name": "Mu LLC",
+      "stage_type": "unmapped", "ball_with": "firm", "stage_limit_days": null, "stuck_days": 7, "critical_days": 10
+    }
+  ],
+  "people": [
+    { "actor_type": "Employee", "id": 12, "display_name": "Dana Prep", "first_name": "Dana", "last_name": "Prep" },
+    { "actor_type": "Employee", "id": 14, "display_name": null, "first_name": "Sam", "last_name": "Reviewer" },
+    { "actor_type": "Owner", "id": 3, "display_name": null, "first_name": null, "last_name": null }
+  ],
+  "events": [
+    { "event_type": "new", "at": "2026-05-04T15:00:00Z" },
+    { "event_type": "new", "at": "2026-07-27T15:00:00Z" },
+    { "event_type": "new", "at": "2026-08-10T15:00:00Z" },
+    { "event_type": "completed", "at": "2026-08-12T15:00:00Z" },
+    { "event_type": "moved", "at": "2026-08-13T15:00:00Z" },
+    { "event_type": "archived", "at": "2026-08-14T15:00:00Z" },
+    { "event_type": "new", "at": "2026-10-17T00:00:00Z" },
+    { "event_type": "new", "at": "2026-10-18T23:59:00Z" },
+    { "event_type": "new", "at": "2026-10-19T00:30:00Z" },
+    { "event_type": "completed", "at": "2026-10-22T15:00:00Z" }
+  ],
+  "cfd": [
+    { "snapshot_date": "2026-10-20", "stage_title": "Preparation", "stage_order": 2, "n": 4 },
+    { "snapshot_date": "2026-10-20", "stage_title": "Intake", "stage_order": 1, "n": 5 },
+    { "snapshot_date": "2026-10-21", "stage_title": "Preparation", "stage_order": 2, "n": 3 },
+    { "snapshot_date": "2026-10-21", "stage_title": "Review", "stage_order": 3, "n": 2 },
+    { "snapshot_date": "2026-10-22", "stage_title": "Intake", "stage_order": 1, "n": 6 },
+    { "snapshot_date": "2026-10-22", "stage_title": "Delivery", "stage_order": 4, "n": 1 }
+  ],
+  "stageDwell": [
+    { "stage_title": "Delivery", "stage_order": 4, "avg_days": 2, "n": 3 },
+    { "stage_title": "Intake", "stage_order": 1, "avg_days": 5, "n": 10 },
+    { "stage_title": "Legacy", "stage_order": null, "avg_days": 9, "n": 1 },
+    { "stage_title": "Preparation", "stage_order": 2, "avg_days": 4, "n": 6 }
+  ],
+  "cycle_days": [3, 7, 8, 9, 14, 15, 22, 30, 45]
+}

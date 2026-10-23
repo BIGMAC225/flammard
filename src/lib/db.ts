@@ -1,5 +1,6 @@
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
-import { env } from './env';
+// .ts extension: scripts/backfill-csv.ts loads this module under plain Node, which resolves relative imports literally
+import { env } from './env.ts';
 
 // Netlify DB injects NETLIFY_DATABASE_URL; DATABASE_URL is the fallback for
 // local development against any Postgres.

@@ -27,7 +27,8 @@ export type Permission =
   | 'people.manage'
   | 'people.grant_admin'
   | 'settings.manage'
-  | 'import.manage';
+  | 'import.manage'
+  | 'fulfillment.view';
 
 const ALL_TEAMS: TeamId[] = ['leadership', 'management'];
 
@@ -35,7 +36,7 @@ const ALL_TEAMS: TeamId[] = ['leadership', 'management'];
 const MATRIX: Record<Role, Permission[]> = {
   observer: ['app.view', 'account.self'],
   member: ['items.edit'],
-  manager: ['meetings.run', 'minutes.approve', 'structure.manage'],
+  manager: ['meetings.run', 'minutes.approve', 'structure.manage', 'fulfillment.view'],
   facilitator: ['teams.all'],
   admin: ['people.manage', 'settings.manage', 'import.manage'],
   owner: ['people.grant_admin'],
@@ -127,6 +128,7 @@ const RULES: Array<{ method: Method; test: (path: string) => boolean; need: Need
   { method: 'GET', test: (p) => p === '/api/team', need: 'app.view' },
   { method: 'non-GET', test: (p) => p.startsWith('/api/'), need: 'items.edit' },
   { method: 'GET', test: (p) => p.startsWith('/api/'), need: 'app.view' },
+  { method: 'any', test: (p) => p === '/fulfillment' || p.startsWith('/fulfillment/'), need: 'fulfillment.view' },
   { method: 'any', test: (p) => p === '/dashboard/people', need: 'people.manage' },
   { method: 'any', test: (p) => p === '/dashboard/settings', need: 'settings.manage' },
   { method: 'any', test: (p) => p === '/dashboard/import', need: 'import.manage' },

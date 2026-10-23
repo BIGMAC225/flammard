@@ -1,0 +1,16 @@
+{
+  "data": {
+    "actor_id": 1,
+    "actor_type": "Owner",
+    "email": "owner@example.com",
+    "firm_name": "Example Firm",
+    "first_name": "Example",
+    "last_name": "Owner",
+    "now": "2026-10-23T12:00:00Z",
+    "role": "owner",
+    "subdomain": "example",
+    "timezone": "America/Chicago",
+    "user_id": 10
+  },
+  "meta": {}
+}
