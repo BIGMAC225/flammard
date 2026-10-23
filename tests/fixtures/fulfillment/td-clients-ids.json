@@ -1,0 +1,25 @@
+{
+  "data": [
+    {
+      "id": 501,
+      "account_name": "Acme Test LLC",
+      "company_name": "Acme Test LLC",
+      "account_type": "company",
+      "code": "ACME",
+      "lead": false,
+      "archived_at": null,
+      "tag_ids": [1, 2]
+    },
+    {
+      "id": 502,
+      "account_name": "Beta Example Inc",
+      "company_name": null,
+      "account_type": "individual",
+      "code": "",
+      "lead": false,
+      "archived_at": null,
+      "tag_ids": []
+    }
+  ],
+  "meta": { "next_cursor": null }
+}

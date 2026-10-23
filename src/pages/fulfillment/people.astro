@@ -1,0 +1,76 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { sql } from '../../lib/db';
+import { enrich, loadPeople, loadViewRows, personWorkload } from '../../lib/fulfillment-views';
+import type { WorkloadRow } from '../../lib/fulfillment-views';
+
+let work: WorkloadRow[] = [];
+let loadError: string | null = null;
+try {
+  const db = sql();
+  work = personWorkload(enrich(await loadViewRows(db)), await loadPeople(db));
+} catch (err) {
+  loadError = err instanceof Error ? err.message : String(err);
+  work = [];
+}
+
+// personWorkload labels the no-assignee bucket 'unassigned' and sorts it in
+// with everyone else; relabel it "Unassigned" and keep it last.
+const buckets = [
+  ...work.filter((w) => w.person !== 'unassigned'),
+  ...work.filter((w) => w.person === 'unassigned').map((w) => ({ ...w, name: 'Unassigned' })),
+];
+---
+
+<Dashboard
+  eyebrow="Fulfillment"
+  title="Workload"
+  description="Active jobs per assignee, firm side versus waiting on the client."
+  back={{ href: '/fulfillment', label: 'Fulfillment' }}
+>
+  {loadError && (
+    <div class="card bg-amber-50 border-amber-200 mb-8">
+      <p class="font-semibold text-amber-900">Fulfillment tables are not available yet</p>
+      <p class="text-sm text-amber-900 mt-1">{loadError}</p>
+    </div>
+  )}
+
+  {!loadError && buckets.length === 0 && (
+    <div class="card text-center py-12">
+      <p class="text-lg font-medium text-ink-primary mb-2">No active jobs yet</p>
+      <p class="text-sm text-ink-secondary mb-1">No client job snapshots have been imported yet, so nobody has a workload to show.</p>
+      <p class="text-sm text-ink-muted">Run the fulfillment poller to bring jobs in: docs/AUTOMATION.md, section 4.</p>
+    </div>
+  )}
+
+  {buckets.length > 0 && (
+    <div class="card p-0 overflow-hidden">
+      <table class="table-brand">
+        <thead>
+          <tr>
+            <th>Person</th>
+            <th>Active jobs</th>
+            <th>Firm jobs</th>
+            <th>Client jobs</th>
+            <th>Stuck</th>
+            <th>Critical</th>
+            <th>Past internal deadline</th>
+          </tr>
+        </thead>
+        <tbody>
+          {buckets.map((w) => (
+            <tr>
+              <td class="font-medium">{w.name}</td>
+              <td class="text-ink-secondary tabular-nums">{w.active_jobs}</td>
+              <td class="text-ink-secondary tabular-nums">{w.firm_jobs}</td>
+              <td class="text-ink-secondary tabular-nums">{w.client_jobs}</td>
+              <td class={`tabular-nums ${w.stuck > 0 ? 'text-amber-900 font-medium' : 'text-ink-secondary'}`}>{w.stuck}</td>
+              <td class={`tabular-nums ${w.critical > 0 ? 'text-red-800 font-medium' : 'text-ink-secondary'}`}>{w.critical}</td>
+              <td class="text-ink-secondary tabular-nums">{w.past_internal_deadline}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )}
+</Dashboard>

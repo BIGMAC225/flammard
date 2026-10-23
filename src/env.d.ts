@@ -2,7 +2,7 @@
 
 declare namespace App {
   interface Locals {
-    /** Set by src/middleware.ts on every /dashboard and non-public /api request. */
+    /** Set by src/middleware.ts on every /dashboard, /fulfillment and non-public /api request. */
     principal?: import('./types').Principal;
   }
 }

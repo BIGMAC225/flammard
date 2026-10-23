@@ -1,0 +1,216 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { sql } from '../../lib/db';
+import {
+  cycleStats,
+  loadCycleRows,
+  loadPipelines,
+  loadStageDwell,
+  stageDwell,
+} from '../../lib/fulfillment-views';
+import type { CycleRow, CycleStats, PipelineLite, StageDwellRow } from '../../lib/fulfillment-views';
+
+let cycle: CycleRow[] = [];
+let pipelines: PipelineLite[] = [];
+let dwell: StageDwellRow[] = [];
+let loadError: string | null = null;
+try {
+  const db = sql();
+  cycle = await loadCycleRows(db);
+  pipelines = await loadPipelines(db);
+  dwell = stageDwell(await loadStageDwell(db));
+} catch (err) {
+  loadError = err instanceof Error ? err.message : String(err);
+  cycle = [];
+  pipelines = [];
+  dwell = [];
+}
+
+// BigInt columns may arrive as strings; only finite day counts feed the stats.
+const toDays = (rows: CycleRow[]): number[] => rows.map((r) => Number(r.cycle_days)).filter(Number.isFinite);
+const stats = cycleStats(toDays(cycle));
+
+// Per-pipeline stats: group the cycle rows by pipeline, cycleStats each group.
+const titles = new Map(pipelines.map((p) => [String(p.id), p.title]));
+const byPipeline = new Map<string, CycleRow[]>();
+for (const row of cycle) {
+  const key = String(row.pipeline_id);
+  const list = byPipeline.get(key) ?? [];
+  list.push(row);
+  byPipeline.set(key, list);
+}
+const pipelineStats: { title: string; stats: CycleStats }[] = [...byPipeline.entries()]
+  .map(([key, rows]) => ({ title: titles.get(key) ?? `Pipeline ${key}`, stats: cycleStats(toDays(rows)) }))
+  .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
+
+// Histogram: one bar per 7-day bucket.
+const barMax = Math.max(1, ...stats.histogram.map((b) => b.n));
+const chartW = 640;
+const chartH = 200;
+const padL = 34;
+const padR = 10;
+const padT = 14;
+const padB = 44;
+const plotW = chartW - padL - padR;
+const plotH = chartH - padT - padB;
+const slotW = stats.histogram.length ? plotW / stats.histogram.length : 0;
+const barW = Math.min(28, Math.max(4, slotW - 8));
+const yBar = (v: number) => padT + plotH - (v / barMax) * plotH;
+const xBar = (i: number) => padL + i * slotW + (slotW - barW) / 2;
+const gridValues = [...new Set([0, Math.round(barMax / 2), barMax])];
+---
+
+<Dashboard
+  eyebrow="Fulfillment"
+  title="Cycle time"
+  description="Intake to completion per pipeline, and where the days go."
+  back={{ href: '/fulfillment', label: 'Fulfillment' }}
+>
+  {loadError && (
+    <div class="card bg-amber-50 border-amber-200 mb-8">
+      <p class="font-semibold text-amber-900">Fulfillment tables are not available yet</p>
+      <p class="text-sm text-amber-900 mt-1">{loadError}</p>
+    </div>
+  )}
+
+  {!loadError && (
+    <div class="grid grid-cols-3 gap-4 mb-10">
+      <div class="stat-tile">
+        <p class="stat-tile-label">Completed jobs</p>
+        <p class="stat-tile-value">{stats.count}</p>
+        <p class="stat-tile-hint">with an intake and a completion date</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-tile-label">Median days</p>
+        <p class="stat-tile-value">{stats.median ?? '-'}</p>
+        <p class="stat-tile-hint">intake to completion</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-tile-label">85th percentile days</p>
+        <p class="stat-tile-value">{stats.p85 ?? '-'}</p>
+        <p class="stat-tile-hint">most jobs finish under this</p>
+      </div>
+    </div>
+  )}
+
+  {!loadError && stats.count === 0 && (
+    <div class="card text-center py-12 mb-10">
+      <p class="text-lg font-medium text-ink-primary mb-2">No completed jobs with an intake date yet</p>
+      <p class="text-sm text-ink-secondary mb-1">Cycle statistics appear once jobs have both an intake and a completion date in their latest snapshot.</p>
+      <p class="text-sm text-ink-muted">Run the fulfillment poller to keep snapshots current: docs/AUTOMATION.md, section 4.</p>
+    </div>
+  )}
+
+  {!loadError && stats.count > 0 && (
+    <div class="mb-10">
+      <h2 class="section-title mb-4">Histogram</h2>
+      <div class="card mb-4">
+        <svg
+          viewBox={`0 0 ${chartW} ${chartH}`}
+          class="w-full"
+          role="img"
+          aria-label="Completed jobs by 7-day cycle time bucket"
+        >
+          {gridValues.map((v) => (
+            <g>
+              <line x1={padL} y1={yBar(v)} x2={chartW - padR} y2={yBar(v)} class="stroke-line" stroke-width="1" />
+              <text x={padL - 6} y={yBar(v) + 3} text-anchor="end" font-size="10" class="fill-ink-muted">{v}</text>
+            </g>
+          ))}
+          {stats.histogram.map((b, i) => (
+            <g>
+              <rect
+                x={xBar(i)}
+                y={yBar(b.n)}
+                width={barW}
+                height={padT + plotH - yBar(b.n)}
+                rx="2"
+                class="fill-accent"
+              />
+              <text x={xBar(i) + barW / 2} y={chartH - 26} text-anchor="middle" font-size="9" class="fill-ink-secondary">{b.from}</text>
+              <text x={xBar(i) + barW / 2} y={chartH - 14} text-anchor="middle" font-size="9" class="fill-ink-muted">to {b.to}</text>
+            </g>
+          ))}
+        </svg>
+      </div>
+      <div class="card p-0 overflow-x-auto">
+        <table class="table-brand">
+          <thead>
+            <tr>
+              <th>From days</th>
+              <th>To days</th>
+              <th>Jobs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.histogram.map((b) => (
+              <tr>
+                <td class="text-ink-secondary tabular-nums">{b.from}</td>
+                <td class="text-ink-secondary tabular-nums">{b.to}</td>
+                <td class="text-ink-secondary tabular-nums">{b.n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
+
+  {!loadError && stats.count > 0 && (
+    <div class="mb-10">
+      <h2 class="section-title mb-4">Per pipeline</h2>
+      <div class="card p-0 overflow-x-auto">
+        <table class="table-brand">
+          <thead>
+            <tr>
+              <th>Pipeline</th>
+              <th>Completed jobs</th>
+              <th>Median days</th>
+              <th>85th percentile days</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pipelineStats.map((p) => (
+              <tr>
+                <td class="font-medium">{p.title}</td>
+                <td class="text-ink-secondary tabular-nums">{p.stats.count}</td>
+                <td class="text-ink-secondary tabular-nums">{p.stats.median ?? '-'}</td>
+                <td class="text-ink-secondary tabular-nums">{p.stats.p85 ?? '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
+
+  {!loadError && (
+    <div>
+      <h2 class="section-title mb-4">Average days per stage</h2>
+      {dwell.length === 0 ? (
+        <p class="text-sm text-ink-muted">None yet; the table fills in as stage_intervals close.</p>
+      ) : (
+        <div class="card p-0 overflow-x-auto">
+          <table class="table-brand">
+            <thead>
+              <tr>
+                <th>Stage</th>
+                <th>Average days</th>
+                <th>Closed intervals</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dwell.map((row) => (
+                <tr>
+                  <td class="font-medium">{row.stage_title}</td>
+                  <td class="text-ink-secondary tabular-nums">{row.avg_days}</td>
+                  <td class="text-ink-secondary tabular-nums">{row.n}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )}
+</Dashboard>

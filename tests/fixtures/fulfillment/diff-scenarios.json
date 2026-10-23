@@ -1,0 +1,651 @@
+{
+  "first_run_backfill": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T09:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        },
+        {
+          "job_id": 1002,
+          "pipeline_id": 7,
+          "stage_id": 10,
+          "status_id": 1,
+          "moved_at": "2026-10-15T10:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": null,
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [],
+      "openIntervals": [],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": true,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 2, "moved": 0, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "new", "from_stage_id": null, "to_stage_id": null },
+        { "job_id": 1002, "event_type": "new", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": {}
+    }
+  },
+  "new_job_later_run": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 10,
+          "status_id": 1,
+          "moved_at": "2026-10-20T09:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-18",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [],
+      "openIntervals": [],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 1, "moved": 0, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "new", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": {}
+    }
+  },
+  "moved_forward": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-19T14:30:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 10,
+          "status_id": 1,
+          "moved_at": "2026-10-16T09:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 501, "job_id": 1001, "stage_id": 10, "entered_at": "2026-10-16T09:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 1, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "moved", "from_stage_id": 10, "to_stage_id": 20 }
+      ],
+      "closedDays": { "1001|10": 3 }
+    }
+  },
+  "moved_back": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 10,
+          "status_id": 1,
+          "moved_at": "2026-10-20T10:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-18T10:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 502, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-18T10:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 0, "moved_back": 1, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "moved_back", "from_stage_id": 20, "to_stage_id": 10 }
+      ],
+      "closedDays": { "1001|20": 2 }
+    }
+  },
+  "bounce": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-21T16:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 503, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-10T08:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 1, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "moved", "from_stage_id": 20, "to_stage_id": 20 }
+      ],
+      "closedDays": { "1001|20": 11 }
+    }
+  },
+  "completed": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 2,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": "2026-10-21T11:00:00-05:00",
+          "intake_date": "2026-10-01",
+          "completed_at": "2026-10-21T11:00:00-05:00",
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 504, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-10T08:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 0, "moved_back": 0, "status_changed": 0, "completed": 1, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "completed", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": { "1001|20": 11 }
+    }
+  },
+  "archived": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 3,
+          "moved_at": "2026-10-12T09:00:00-05:00",
+          "status_changed_at": "2026-10-22T10:00:00-05:00",
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-12T09:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 505, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-12T09:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 0, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 1, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "archived", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": { "1001|20": 10 }
+    }
+  },
+  "reopened": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-21T09:00:00-05:00",
+          "status_changed_at": "2026-10-21T09:00:00-05:00",
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 3,
+          "moved_at": "2026-10-21T09:00:00-05:00",
+          "status_changed_at": "2026-10-20T12:00:00-05:00",
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 0, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 1, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "reopened", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": {}
+    }
+  },
+  "reopened_with_open_interval": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": "2026-10-21T12:00:00-05:00",
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 3,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": "2026-10-20T12:00:00-05:00",
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 506, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-10T08:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 0, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 1, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "reopened", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": {}
+    }
+  },
+  "status_changed": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 5,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": "2026-10-20T13:00:00-05:00",
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 507, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-10T08:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 0, "moved_back": 0, "status_changed": 1, "completed": 0, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "status_changed", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": {}
+    }
+  },
+  "moved_and_completed": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 2,
+          "moved_at": "2026-10-21T10:00:00-05:00",
+          "status_changed_at": "2026-10-22T09:30:00-05:00",
+          "intake_date": "2026-10-01",
+          "completed_at": "2026-10-22T09:30:00-05:00",
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 10,
+          "status_id": 1,
+          "moved_at": "2026-10-15T09:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 508, "job_id": 1001, "stage_id": 10, "entered_at": "2026-10-15T09:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 1, "moved_back": 0, "status_changed": 0, "completed": 1, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "moved", "from_stage_id": 10, "to_stage_id": 20 },
+        { "job_id": 1001, "event_type": "completed", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": { "1001|10": 6, "1001|20": 1 }
+    }
+  },
+  "absent_full_walk": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        },
+        {
+          "job_id": 1002,
+          "pipeline_id": 7,
+          "stage_id": 30,
+          "status_id": 1,
+          "moved_at": "2026-10-05T09:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-09-28",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 509, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-10T08:00:00-05:00" },
+        { "id": 510, "job_id": 1002, "stage_id": 30, "entered_at": "2026-10-05T09:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 0, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 1, "reopened": 0, "assumed_deleted": 1 },
+      "events": [
+        { "job_id": 1002, "event_type": "archived", "from_stage_id": null, "to_stage_id": null }
+      ],
+      "closedDays": { "1002|30": 17 }
+    }
+  },
+  "absent_csv": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-10T08:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        },
+        {
+          "job_id": 1002,
+          "pipeline_id": 7,
+          "stage_id": 30,
+          "status_id": 1,
+          "moved_at": "2026-10-05T09:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-09-28",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 509, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-10T08:00:00-05:00" },
+        { "id": 510, "job_id": 1002, "stage_id": 30, "entered_at": "2026-10-05T09:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3 },
+      "firstRunEver": false,
+      "fullWalk": false,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 0, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [],
+      "closedDays": {}
+    }
+  },
+  "moved_unknown_order": {
+    "input": {
+      "current": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 40,
+          "status_id": 1,
+          "moved_at": "2026-10-20T10:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-22T15:00:00Z"
+        }
+      ],
+      "previous": [
+        {
+          "job_id": 1001,
+          "pipeline_id": 7,
+          "stage_id": 20,
+          "status_id": 1,
+          "moved_at": "2026-10-17T10:00:00-05:00",
+          "status_changed_at": null,
+          "intake_date": "2026-10-01",
+          "completed_at": null,
+          "captured_at": "2026-10-21T15:00:00Z"
+        }
+      ],
+      "openIntervals": [
+        { "id": 511, "job_id": 1001, "stage_id": 20, "entered_at": "2026-10-17T10:00:00-05:00" }
+      ],
+      "statusKind": { "1": "active", "2": "completed", "3": "archived", "4": "on_hold", "5": "active" },
+      "stageOrder": { "10": 1, "20": 2, "30": 3, "40": null },
+      "firstRunEver": false,
+      "fullWalk": true,
+      "runAt": "2026-10-22T15:00:00Z",
+      "runId": 9
+    },
+    "expect": {
+      "counts": { "new": 0, "moved": 1, "moved_back": 0, "status_changed": 0, "completed": 0, "archived": 0, "reopened": 0, "assumed_deleted": 0 },
+      "events": [
+        { "job_id": 1001, "event_type": "moved", "from_stage_id": 20, "to_stage_id": 40 }
+      ],
+      "closedDays": { "1001|20": 3 }
+    }
+  }
+}

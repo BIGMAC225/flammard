@@ -1,0 +1,470 @@
+{
+  "evaluateJob": {
+    "on_hold_kind": {
+      "row": {
+        "job_id": 2001,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 9,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "on_hold",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 7,
+        "critical_days": 14,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": []
+    },
+    "completed_kind": {
+      "row": {
+        "job_id": 2002,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 9,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "completed",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 7,
+        "critical_days": 14,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": []
+    },
+    "ball_with_excluded": {
+      "row": {
+        "job_id": 2003,
+        "pipeline_id": 7,
+        "stage_id": 50,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 40,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "on_hold",
+        "ball_with": "excluded",
+        "stage_limit_days": null,
+        "stuck_days": 9999,
+        "critical_days": 9999,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": []
+    },
+    "below_stuck": {
+      "row": {
+        "job_id": 2004,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 4,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 5,
+        "critical_days": 10,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": []
+    },
+    "at_stuck": {
+      "row": {
+        "job_id": 2005,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 5,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 5,
+        "critical_days": 10,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": [
+        {
+          "job_id": 2005,
+          "alert_type": "stuck",
+          "level": "stuck",
+          "detail": {
+            "days_in_stage": 5,
+            "stuck": 5,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "preparation",
+            "due_date": null,
+            "internal_deadline": null
+          }
+        }
+      ]
+    },
+    "stuck_plus_3_escalates": {
+      "row": {
+        "job_id": 2006,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 8,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 5,
+        "critical_days": 10,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": [
+        {
+          "job_id": 2006,
+          "alert_type": "stuck",
+          "level": "escalated",
+          "detail": {
+            "days_in_stage": 8,
+            "stuck": 5,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "preparation",
+            "due_date": null,
+            "internal_deadline": null
+          }
+        }
+      ]
+    },
+    "at_critical_is_critical_only": {
+      "row": {
+        "job_id": 2007,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 10,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 5,
+        "critical_days": 10,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": [
+        {
+          "job_id": 2007,
+          "alert_type": "critical",
+          "level": "critical",
+          "detail": {
+            "days_in_stage": 10,
+            "stuck": 5,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "preparation",
+            "due_date": null,
+            "internal_deadline": null
+          }
+        }
+      ]
+    },
+    "past_internal_deadline_regardless_of_days": {
+      "row": {
+        "job_id": 2008,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 9,
+        "due_date": null,
+        "internal_deadline": "2026-10-10",
+        "kind": "active",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 5,
+        "critical_days": 10,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": [
+        {
+          "job_id": 2008,
+          "alert_type": "stuck",
+          "level": "escalated",
+          "detail": {
+            "days_in_stage": 9,
+            "stuck": 5,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "preparation",
+            "due_date": null,
+            "internal_deadline": "2026-10-10"
+          }
+        },
+        {
+          "job_id": 2008,
+          "alert_type": "past_internal_deadline",
+          "level": "critical",
+          "detail": {
+            "days_in_stage": 9,
+            "stuck": 5,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "preparation",
+            "due_date": null,
+            "internal_deadline": "2026-10-10"
+          }
+        }
+      ]
+    },
+    "due_soon_within_14": {
+      "row": {
+        "job_id": 2009,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 1,
+        "due_date": "2026-11-05",
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 5,
+        "critical_days": 10,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": [
+        {
+          "job_id": 2009,
+          "alert_type": "due_soon",
+          "level": "critical",
+          "detail": {
+            "days_in_stage": 1,
+            "stuck": 5,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "preparation",
+            "due_date": "2026-11-05",
+            "internal_deadline": null
+          }
+        }
+      ]
+    },
+    "due_soon_skips_client_review_sign": {
+      "row": {
+        "job_id": 2010,
+        "pipeline_id": 7,
+        "stage_id": 60,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 2,
+        "due_date": "2026-11-01",
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "client_review_sign",
+        "ball_with": "client",
+        "stage_limit_days": null,
+        "stuck_days": 7,
+        "critical_days": 14,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": []
+    },
+    "due_soon_beyond_14": {
+      "row": {
+        "job_id": 2011,
+        "pipeline_id": 7,
+        "stage_id": 40,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 1,
+        "due_date": "2026-11-06",
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "preparation",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 5,
+        "critical_days": 10,
+        "assignee_actors": ["Employee:12"]
+      },
+      "expect": []
+    },
+    "unmapped_rule_at_stuck": {
+      "row": {
+        "job_id": 2012,
+        "pipeline_id": 7,
+        "stage_id": 45,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 7,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "unmapped",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 7,
+        "critical_days": 10,
+        "assignee_actors": []
+      },
+      "expect": [
+        {
+          "job_id": 2012,
+          "alert_type": "stuck",
+          "level": "stuck",
+          "detail": {
+            "days_in_stage": 7,
+            "stuck": 7,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "unmapped",
+            "due_date": null,
+            "internal_deadline": null
+          }
+        }
+      ]
+    },
+    "unmapped_rule_at_critical": {
+      "row": {
+        "job_id": 2013,
+        "pipeline_id": 7,
+        "stage_id": 45,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 10,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "unmapped",
+        "ball_with": "firm",
+        "stage_limit_days": null,
+        "stuck_days": 7,
+        "critical_days": 10,
+        "assignee_actors": []
+      },
+      "expect": [
+        {
+          "job_id": 2013,
+          "alert_type": "critical",
+          "level": "critical",
+          "detail": {
+            "days_in_stage": 10,
+            "stuck": 7,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "unmapped",
+            "due_date": null,
+            "internal_deadline": null
+          }
+        }
+      ]
+    },
+    "stage_limit_wins_over_rule": {
+      "row": {
+        "job_id": 2014,
+        "pipeline_id": 7,
+        "stage_id": 45,
+        "snapshot_date": "2026-10-22",
+        "days_in_stage": 4,
+        "due_date": null,
+        "internal_deadline": null,
+        "kind": "active",
+        "stage_type": "unmapped",
+        "ball_with": "firm",
+        "stage_limit_days": 3,
+        "stuck_days": 7,
+        "critical_days": 10,
+        "assignee_actors": []
+      },
+      "expect": [
+        {
+          "job_id": 2014,
+          "alert_type": "stuck",
+          "level": "stuck",
+          "detail": {
+            "days_in_stage": 4,
+            "stuck": 3,
+            "critical": 10,
+            "ball_with": "firm",
+            "stage_type": "unmapped",
+            "due_date": null,
+            "internal_deadline": null
+          }
+        }
+      ]
+    }
+  },
+  "reconcile": {
+    "new_desired_opens": {
+      "desired": [
+        { "job_id": 2001, "alert_type": "stuck", "level": "stuck", "detail": null }
+      ],
+      "existing": [],
+      "expect": {
+        "open": [
+          { "job_id": 2001, "alert_type": "stuck", "level": "stuck", "detail": null }
+        ],
+        "resolve": [],
+        "relevel": [],
+        "unsnooze": []
+      }
+    },
+    "not_desired_resolves": {
+      "desired": [],
+      "existing": [
+        { "id": 91, "job_id": 2002, "alert_type": "stuck", "level": "stuck", "status": "open", "snoozed_until": null }
+      ],
+      "expect": { "open": [], "resolve": [91], "relevel": [], "unsnooze": [] }
+    },
+    "stuck_relevels_to_escalated": {
+      "desired": [
+        { "job_id": 2001, "alert_type": "stuck", "level": "escalated", "detail": null }
+      ],
+      "existing": [
+        { "id": 92, "job_id": 2001, "alert_type": "stuck", "level": "stuck", "status": "open", "snoozed_until": null }
+      ],
+      "expect": { "open": [], "resolve": [], "relevel": [{ "id": 92, "level": "escalated" }], "unsnooze": [] }
+    },
+    "escalated_never_downgrades": {
+      "desired": [
+        { "job_id": 2001, "alert_type": "stuck", "level": "stuck", "detail": null }
+      ],
+      "existing": [
+        { "id": 93, "job_id": 2001, "alert_type": "stuck", "level": "escalated", "status": "open", "snoozed_until": null }
+      ],
+      "expect": { "open": [], "resolve": [], "relevel": [], "unsnooze": [] }
+    },
+    "expired_snooze_still_desired_unsnoozes": {
+      "desired": [
+        { "job_id": 2004, "alert_type": "stuck", "level": "stuck", "detail": null }
+      ],
+      "existing": [
+        { "id": 94, "job_id": 2004, "alert_type": "stuck", "level": "stuck", "status": "snoozed", "snoozed_until": "2026-10-21" }
+      ],
+      "expect": { "open": [], "resolve": [], "relevel": [], "unsnooze": [94] }
+    },
+    "expired_snooze_not_desired_resolves": {
+      "desired": [],
+      "existing": [
+        { "id": 95, "job_id": 2005, "alert_type": "stuck", "level": "stuck", "status": "snoozed", "snoozed_until": "2026-10-21" }
+      ],
+      "expect": { "open": [], "resolve": [95], "relevel": [], "unsnooze": [] }
+    },
+    "future_snooze_untouched": {
+      "desired": [
+        { "job_id": 2006, "alert_type": "stuck", "level": "stuck", "detail": null }
+      ],
+      "existing": [
+        { "id": 96, "job_id": 2006, "alert_type": "stuck", "level": "stuck", "status": "snoozed", "snoozed_until": "2026-10-25" }
+      ],
+      "expect": { "open": [], "resolve": [], "relevel": [], "unsnooze": [] }
+    }
+  }
+}

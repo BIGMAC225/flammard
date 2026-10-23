@@ -14,7 +14,7 @@ import { isTeam, setTeam, TEAM_COOKIE } from './lib/teams';
 
 const PUBLIC_EXACT = new Set(['/', '/login', '/api/auth/login', '/api/auth/setup', '/api/auth/logout']);
 const isPublic = (p: string) => PUBLIC_EXACT.has(p) || p.startsWith('/setup/') || p.startsWith('/api/integrations/');
-const isGuarded = (p: string) => p === '/dashboard' || p.startsWith('/dashboard/') || p.startsWith('/api/');
+const isGuarded = (p: string) => p === '/dashboard' || p.startsWith('/dashboard/') || p === '/fulfillment' || p.startsWith('/fulfillment/') || p.startsWith('/api/');
 const isSafeMethod = (m: string) => m === 'GET' || m === 'HEAD' || m === 'OPTIONS';
 
 const jsonError = (error: string, status: number) =>

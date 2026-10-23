@@ -1,0 +1,102 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { sql } from '../../lib/db';
+import { displayName, enrich, loadPeople, loadViewRows, stuckList } from '../../lib/fulfillment-views';
+import type { EnrichedRow, PersonLite } from '../../lib/fulfillment-views';
+
+let list: EnrichedRow[] = [];
+let people: PersonLite[] = [];
+let loadError: string | null = null;
+try {
+  const db = sql();
+  list = stuckList(enrich(await loadViewRows(db)));
+  people = await loadPeople(db);
+} catch (err) {
+  loadError = err instanceof Error ? err.message : String(err);
+  list = [];
+  people = [];
+}
+
+const n = list.length;
+
+// The severity badge tiers, the same ones stuckList sorts by: critical
+// outranks a past internal deadline, which outranks plain stuck.
+function severity(row: EnrichedRow): { label: string; cls: string } {
+  if (row.rag === 'red') return { label: 'critical', cls: 'badge-overdue' };
+  if (row.past_internal_deadline) return { label: 'past deadline', cls: 'badge-deferred' };
+  return { label: 'stuck', cls: 'badge-deferred' };
+}
+---
+
+<Dashboard
+  eyebrow="Fulfillment"
+  title="Stuck list"
+  description={`Stuck and critical jobs, worst first; who must move them today. ${n} ${n === 1 ? 'job' : 'jobs'}.`}
+  back={{ href: '/fulfillment', label: 'Fulfillment' }}
+>
+  {loadError && (
+    <div class="card bg-amber-50 border-amber-200 mb-8">
+      <p class="font-semibold text-amber-900">Fulfillment tables are not available yet</p>
+      <p class="text-sm text-amber-900 mt-1">{loadError}</p>
+    </div>
+  )}
+
+  {!loadError && list.length === 0 && (
+    <div class="card text-center py-12">
+      <p class="text-lg font-medium text-ink-primary mb-2">Nothing is stuck.</p>
+      <p class="text-sm text-ink-secondary">Every active job is inside its thresholds and no internal deadline has passed.</p>
+    </div>
+  )}
+
+  {list.length > 0 && (
+    <div class="card p-0 overflow-x-auto">
+      <table class="table-brand">
+        <thead>
+          <tr>
+            <th>Severity</th>
+            <th>Job</th>
+            <th>Account</th>
+            <th>Pipeline</th>
+            <th>Stage</th>
+            <th>Assignees</th>
+            <th>Days in stage</th>
+            <th>Threshold</th>
+            <th>Days over</th>
+            <th>Days to due</th>
+            <th>Internal deadline</th>
+            <th>Ball with</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((row) => (
+            <tr class={row.rag === 'red' ? 'bg-red-50' : row.rag === 'amber' ? 'bg-amber-50' : ''}>
+              <td>
+                <span class={severity(row).cls}>{severity(row).label}</span>
+              </td>
+              <td>
+                <a
+                  href={`/fulfillment/job/${String(row.job_id)}`}
+                  class="font-medium text-ink-primary hover:text-accent transition-colors"
+                >
+                  {row.job_name ?? `Job ${String(row.job_id)}`}
+                </a>
+              </td>
+              <td class="text-ink-secondary whitespace-nowrap">{row.account_name ?? 'No account name'}</td>
+              <td class="text-ink-secondary whitespace-nowrap">{row.pipeline_title}</td>
+              <td class="text-ink-secondary whitespace-nowrap">{row.stage_title}</td>
+              <td class="text-ink-secondary">{row.assignee_actors.length ? row.assignee_actors.map((a) => displayName(a, people)).join(', ') : 'Unassigned'}</td>
+              <td class={`tabular-nums whitespace-nowrap ${row.days_in_stage >= row.critical ? 'text-red-800 font-medium' : 'text-ink-secondary'}`}>{row.days_in_stage}</td>
+              <td class="text-ink-secondary tabular-nums">{row.stuck}</td>
+              <td class={`tabular-nums ${row.days_over > 0 ? 'text-ink-primary font-medium' : 'text-ink-muted'}`}>{row.days_over}</td>
+              <td class="text-ink-secondary tabular-nums">{row.days_to_due ?? ''}</td>
+              <td class="text-ink-secondary whitespace-nowrap">{row.internal_deadline ?? ''}</td>
+              <td>
+                {row.ball_with === 'client' ? <span class="badge-draft">client</span> : <span class="text-ink-secondary">firm</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )}
+</Dashboard>

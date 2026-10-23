@@ -1,0 +1,45 @@
+{
+  "data": [
+    {
+      "id": 1004,
+      "client_id": 503,
+      "name": "Bookkeeping Cleanup",
+      "pipeline_stage_id": 303,
+      "pipeline_job_status_id": 401,
+      "moved_at": "2026-10-19T11:20:00Z",
+      "status_changed_at": "2026-10-19T11:20:00Z",
+      "intake_date": "2026-10-05",
+      "start_date": "2026-10-07",
+      "due_date": "2026-12-01",
+      "internal_deadline": null,
+      "completed_at": null,
+      "time_budget": 12,
+      "time_tracked": 4,
+      "priority": "low",
+      "created_at": "2026-10-05T10:00:00Z",
+      "updated_at": "2026-10-19T11:20:00Z",
+      "description": "Synthetic page 2 job D"
+    },
+    {
+      "id": 1005,
+      "client_id": 502,
+      "name": "Amended 1120-S",
+      "pipeline_stage_id": 301,
+      "pipeline_job_status_id": 402,
+      "moved_at": "2026-10-22T14:05:00Z",
+      "status_changed_at": "2026-10-22T14:05:00Z",
+      "intake_date": "2026-10-08",
+      "start_date": "2026-10-09",
+      "due_date": "2026-11-30",
+      "internal_deadline": "2026-11-27",
+      "completed_at": null,
+      "time_budget": 6,
+      "time_tracked": 1,
+      "priority": "medium",
+      "created_at": "2026-10-08T13:00:00Z",
+      "updated_at": "2026-10-22T14:05:00Z",
+      "description": "Synthetic page 2 job E"
+    }
+  ],
+  "meta": { "limit": 200, "next_cursor": null }
+}

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "insufficient_scope",
+    "message": "The key lacks the jobs:read scope",
+    "details": { "required": "jobs:read" }
+  }
+}

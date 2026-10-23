@@ -9,11 +9,13 @@ import { getStore } from '@netlify/blobs';
 //   auth        — login throttling counters
 //   taxdome-jobs — a TaxDome report waiting for the background import
 //                  (`<job id>/meta` JSON + `<job id>/pdf`), deleted once processed
+//   fulfillment-jobs — a fulfillment CSV export waiting for the background import, deleted once processed
 
 export const recordings = () => getStore({ name: 'recordings', consistency: 'strong' });
 export const minutesPdf = () => getStore({ name: 'minutes-pdf', consistency: 'strong' });
 export const authStore = () => getStore({ name: 'auth', consistency: 'strong' });
 export const taxdomeJobs = () => getStore({ name: 'taxdome-jobs', consistency: 'strong' });
+export const fulfillmentJobs = () => getStore({ name: 'fulfillment-jobs', consistency: 'strong' });
 
 export const CHUNK_BYTES = 3 * 1024 * 1024;
 
