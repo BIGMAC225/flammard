@@ -68,6 +68,18 @@ export interface ChatEndpoint {
 }
 
 /**
+ * The max_tokens to send with a call. Z.ai counts reasoning tokens against
+ * max_tokens, so a thinking run gets the whole ZAI_MAX_TOKENS budget —
+ * default 65536, clamped at 131072 (GLM-5.3's documented max output is
+ * 128K) — and callMax does not apply. Everything else takes the smaller of
+ * callMax and the provider's env cap (Z.ai default 16000, NVIDIA 8192).
+ */
+export function replyBudget(callMax: number, envMax: string | undefined, opts: { zai: boolean; thinking: boolean }): number {
+  if (opts.zai && opts.thinking) return Math.min(Number(envMax) || 65536, 131072);
+  return Math.min(callMax, Number(envMax) || (opts.zai ? 16000 : 8192));
+}
+
+/**
  * Reads a chat-completions reply: `choices[0].message.content` when
  * non-blank, else `reasoning_content`, else `reasoning` (reasoning models
  * sometimes leave `content` empty and put the whole answer, JSON included,

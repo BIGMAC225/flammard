@@ -1,9 +1,9 @@
-// Tests for src/lib/openai-compat.ts (provider selection, reply reading,
-// JSON extraction).   node --test tests/ai-provider.test.mjs
+// Tests for src/lib/openai-compat.ts (provider selection, reply budgets,
+// reply reading, JSON extraction).   node --test tests/ai-provider.test.mjs
 // Needs Node 22.18+ / 24 (runs the .ts module directly via type stripping).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectProvider, chatReplyText, extractJson } from '../src/lib/openai-compat.ts';
+import { selectProvider, chatReplyText, extractJson, replyBudget } from '../src/lib/openai-compat.ts';
 
 // Placeholder key values — never real credentials.
 const get = (vars) => (name) => vars[name];
@@ -89,4 +89,28 @@ test('extractJson: prose around', () => {
 
 test('extractJson: no object -> throws', () => {
   assert.throws(() => extractJson('no json here'));
+});
+
+test('replyBudget: zai thinking, no env cap -> 65536 (callMax ignored)', () => {
+  assert.equal(replyBudget(16000, undefined, { zai: true, thinking: true }), 65536);
+});
+
+test('replyBudget: zai thinking, env cap 90000 -> 90000', () => {
+  assert.equal(replyBudget(16000, '90000', { zai: true, thinking: true }), 90000);
+});
+
+test('replyBudget: zai thinking, env cap 200000 -> clamped to 131072', () => {
+  assert.equal(replyBudget(16000, '200000', { zai: true, thinking: true }), 131072);
+});
+
+test('replyBudget: zai no thinking -> min(callMax, env cap)', () => {
+  assert.equal(replyBudget(16000, '8000', { zai: true, thinking: false }), 8000);
+});
+
+test('replyBudget: nvidia, no env cap -> min(callMax, 8192)', () => {
+  assert.equal(replyBudget(16000, undefined, { zai: false, thinking: false }), 8192);
+});
+
+test('replyBudget: nvidia, env cap 4000 -> 4000', () => {
+  assert.equal(replyBudget(16000, '4000', { zai: false, thinking: false }), 4000);
 });
