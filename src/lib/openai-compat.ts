@@ -102,6 +102,100 @@ export function chatReplyText(data: unknown): { text: string; finishReason: stri
   };
 }
 
+/**
+ * Accumulates a `text/event-stream` chat-completions reply. Feed it the
+ * decoded chunks as they arrive; lines may be split anywhere between chunks.
+ * Streams the `delta.content`, `delta.reasoning_content` and `delta.reasoning`
+ * pieces into three strings and remembers the last non-null `finish_reason`.
+ */
+export function createSseAccumulator(
+  name: string
+): { push(chunk: string): void; end(): { text: string; finishReason: string | undefined } } {
+  let buffer = ''; // partial line carried across chunks
+  let raw = ''; // everything received, kept only until the first data line
+  let sawData = false;
+  let done = false;
+  let content = '';
+  let reasoningContent = '';
+  let reasoning = '';
+  let finishReason: string | undefined;
+
+  const line = (l: string) => {
+    if (l.endsWith('\r')) l = l.slice(0, -1);
+    if (!l || l.startsWith(':') || l.startsWith('event:') || l.startsWith('id:')) return;
+    if (!l.startsWith('data:')) return;
+    sawData = true;
+    let data = l.slice(5);
+    if (data.startsWith(' ')) data = data.slice(1);
+    if (data.trim() === '[DONE]') {
+      done = true;
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return; // a malformed line (mid-stream disconnect, proxy noise) must not kill the stream
+    }
+    if (typeof parsed !== 'object' || parsed === null) return;
+    const obj = parsed as { error?: unknown; choices?: Array<{ delta?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null }; finish_reason?: string | null }> };
+    if ('error' in obj && obj.error != null)
+      throw new Error(`${name} API error: ${JSON.stringify(obj.error).slice(0, 300)}`);
+    const choice = obj.choices?.[0];
+    if (choice?.delta) {
+      content += choice.delta.content ?? '';
+      reasoningContent += choice.delta.reasoning_content ?? '';
+      reasoning += choice.delta.reasoning ?? '';
+    }
+    if (choice && choice.finish_reason != null) finishReason = choice.finish_reason;
+  };
+
+  return {
+    push(chunk: string): void {
+      if (done) return;
+      if (!sawData) raw += chunk;
+      buffer += chunk;
+      let nl = buffer.indexOf('\n');
+      while (nl >= 0) {
+        line(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+        if (done) {
+          buffer = '';
+          return;
+        }
+        nl = buffer.indexOf('\n');
+      }
+    },
+    end(): { text: string; finishReason: string | undefined } {
+      if (buffer) {
+        line(buffer);
+        buffer = '';
+      }
+      // Same reply rule as a non-streaming call, so chatReplyText stays the
+      // single place that decides content vs reasoning. The reasoning fields
+      // are omitted when empty so its `??` chain falls through to `reasoning`.
+      return sawData
+        ? chatReplyText({
+            choices: [
+              {
+                message: { content, reasoning_content: reasoningContent || undefined, reasoning: reasoning || undefined },
+                finish_reason: finishReason,
+              },
+            ],
+          })
+        : // A server that answered with a plain JSON body despite stream:true
+          chatReplyText(JSON.parse(raw));
+    },
+  };
+}
+
+/**
+ * Streams the reply: with GLM thinking enabled, Z.ai sends no response
+ * headers until the whole answer is generated, and Node's fetch (undici)
+ * gives up waiting for headers after its 300s headersTimeout — long before
+ * the request timeout matters. `stream: true` makes the headers arrive at
+ * once and the SSE frames keep the connection alive while tokens arrive.
+ */
 export async function chatCompletion(
   endpoint: ChatEndpoint,
   messages: Array<{ role: string; content: string }>,
@@ -109,26 +203,47 @@ export async function chatCompletion(
   guided: boolean,
   signal?: AbortSignal
 ): Promise<{ text: string; finishReason: string | undefined }> {
-  const res = await fetch(endpoint.url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${endpoint.key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      model: endpoint.model,
-      messages,
-      max_tokens: maxTokens,
-      stream: false,
-      ...endpoint.extraBody,
-      ...(guided ? endpoint.guidedBody : {}),
-    }),
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(endpoint.requestTimeoutMs)])
-      : AbortSignal.timeout(endpoint.requestTimeoutMs),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    const err = new Error(`${endpoint.name} API ${res.status}: ${text.slice(0, 300)}`) as Error & { status?: number };
-    err.status = res.status;
+  try {
+    const res = await fetch(endpoint.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${endpoint.key}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({
+        model: endpoint.model,
+        messages,
+        max_tokens: maxTokens,
+        stream: true,
+        ...endpoint.extraBody,
+        ...(guided ? endpoint.guidedBody : {}),
+      }),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(endpoint.requestTimeoutMs)])
+        : AbortSignal.timeout(endpoint.requestTimeoutMs),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      const err = new Error(`${endpoint.name} API ${res.status}: ${text.slice(0, 300)}`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
+    // res.body arrives as bytes that may split a UTF-8 character or an SSE
+    // line anywhere; the decoder (stream: true) and the accumulator buffer
+    // across chunks.
+    const accumulator = createSseAccumulator(endpoint.name);
+    const decoder = new TextDecoder();
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      accumulator.push(decoder.decode(chunk, { stream: true }));
+    }
+    accumulator.push(decoder.decode());
+    return accumulator.end();
+  } catch (err) {
+    const cause = (err as { cause?: unknown }).cause;
+    if (err instanceof TypeError && cause) {
+      throw new Error(`${endpoint.name} request failed: ${(cause as { code?: string; message?: string }).code || (cause as Error).message}`, { cause });
+    }
     throw err;
   }
-  return chatReplyText(JSON.parse(text));
 }
