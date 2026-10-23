@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { env } from './env';
-import { chatCompletion, extractJson, selectProvider } from './openai-compat';
+import { chatCompletion, extractJson, replyBudget, selectProvider } from './openai-compat';
 import type { AiProvider, ChatEndpoint } from './openai-compat';
 import type { MeetingAnalysis, ProposedRoadmap, ProposedStep, ScorecardExtraction, ScorecardMetric } from '../types';
 
@@ -19,9 +19,12 @@ const MODEL = 'claude-opus-5';
 // (default zai, then nvidia, then anthropic).
 // ZAI_MODEL overrides the Z.ai model (default glm-5.3), ZAI_BASE_URL the API
 // root (default https://api.z.ai/api/paas/v4) and ZAI_MAX_TOKENS the reply
-// cap (default 16000). NVIDIA_MODEL overrides the NVIDIA model (default
-// nvidia/nemotron-3-super-120b-a12b; the previous default, moonshotai/kimi-k3,
-// was retired by NVIDIA on 2026-10-15).
+// cap. Z.ai counts reasoning tokens against max_tokens, so thinking runs
+// (analysis, plan) take the whole cap — default 65536, clamped at 131072,
+// GLM-5.3's documented max output — while non-thinking Z.ai calls get
+// min(call, cap) with a 16000 default. NVIDIA_MODEL overrides the NVIDIA
+// model (default nvidia/nemotron-3-super-120b-a12b; the previous default,
+// moonshotai/kimi-k3, was retired by NVIDIA on 2026-10-15).
 // The step breakdown must answer inside a normal 60s page request, so it has
 // its own model: ZAI_BREAKDOWN_MODEL (default glm-5.3-flash, below),
 // NVIDIA_BREAKDOWN_MODEL (default nemotron-3-super, below) or
@@ -149,15 +152,24 @@ function nvidiaEndpoint(schema: z.ZodType, call: StructuredCall): ChatEndpoint {
   };
 }
 
+/** Z.ai thinking runs on every call that isn't low-effort (the breakdowns). */
+function thinkingEnabled(call: StructuredCall): boolean {
+  return call.effort !== 'low';
+}
+
 function zaiEndpoint(call: StructuredCall): ChatEndpoint {
   const base = (env('ZAI_BASE_URL') || ZAI_DEFAULT_BASE_URL).replace(/\/+$/, '');
+  const thinking = thinkingEnabled(call);
   return {
     name: 'Z.ai',
     url: `${base}/chat/completions`,
     key: env('ZAI_API_KEY')!,
     model: call.model || env('ZAI_MODEL') || ZAI_DEFAULT_MODEL,
-    requestTimeoutMs: 300_000,
-    extraBody: { thinking: { type: call.effort === 'low' ? 'disabled' : 'enabled' } },
+    // A thinking run can reason for minutes on a long transcript; 840s fits
+    // inside the 15-minute limit of Netlify background functions. Page-request
+    // callers pass deadlineMs, which aborts long before this.
+    requestTimeoutMs: thinking ? 840_000 : 300_000,
+    extraBody: { thinking: { type: thinking ? 'enabled' : 'disabled' } },
     guidedBody: { temperature: 0.1, response_format: { type: 'json_object' } },
   };
 }
@@ -173,7 +185,10 @@ async function openaiStructured<S extends z.ZodType>(
     `${call.system}\n\nReply with ONE JSON object and nothing else (no prose, no code fences). ` +
     `It must match this JSON Schema exactly; include every property, using null where a value is unknown:\n${JSON.stringify(jsonSchema)}`;
   const zai = endpoint.name === 'Z.ai';
-  const maxTokens = Math.min(call.maxTokens, Number(env(zai ? 'ZAI_MAX_TOKENS' : 'NVIDIA_MAX_TOKENS')) || (zai ? 16_000 : 8_192));
+  const maxTokens = replyBudget(call.maxTokens, env(zai ? 'ZAI_MAX_TOKENS' : 'NVIDIA_MAX_TOKENS'), {
+    zai,
+    thinking: thinkingEnabled(call),
+  });
 
   // `guided` = the first try: low temperature plus constrained JSON decoding
   // through the OpenAI-standard `response_format`. (The older
@@ -184,7 +199,10 @@ async function openaiStructured<S extends z.ZodType>(
   // instance skip the wasted round trip.
   const ask = async (messages: Array<{ role: string; content: string }>, guided: boolean) => {
     const { text, finishReason } = await chatCompletion(endpoint, messages, maxTokens, guided, signal);
-    if (finishReason === 'length') throw new Error(`${call.label} was cut off (${endpoint.name} max_tokens ${maxTokens})`);
+    if (finishReason === 'length')
+      throw new Error(
+        `${call.label} was cut off (${endpoint.name} max_tokens ${maxTokens}; raise ${zai ? 'ZAI_MAX_TOKENS' : 'NVIDIA_MAX_TOKENS'})`
+      );
     return text;
   };
 
