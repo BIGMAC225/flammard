@@ -49,8 +49,11 @@ export function parsePollRequest(raw: string): PollJobRequest | null {
   }
   if (!body || typeof body !== 'object') return null;
   const { run_id } = body as Record<string, unknown>;
-  if (typeof run_id !== 'number' || !Number.isInteger(run_id) || run_id <= 0 || run_id > Number.MAX_SAFE_INTEGER) {
+  // The trigger route reads the id from Postgres, whose serverless driver
+  // returns bigints as strings, so a digits-only string is accepted too.
+  const id = typeof run_id === 'string' && /^[0-9]+$/.test(run_id) ? Number(run_id) : run_id;
+  if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0 || id > Number.MAX_SAFE_INTEGER) {
     return null;
   }
-  return { run_id };
+  return { run_id: id };
 }

@@ -34,10 +34,12 @@ async function runToUse(request: Request): Promise<{ id: number } | { error: Res
   if (typeof given === 'number' && Number.isInteger(given) && given > 0 && given <= Number.MAX_SAFE_INTEGER) {
     return { id: given };
   }
-  const run = await one<{ id: number }>(
+  const run = await one<{ id: number | string }>(
     sql()`insert into import_runs (source, status, started_at) values ('api', 'running', now()) returning id`
   );
-  return run ?? { error: json({ error: 'Could not create an import run' }, 500) };
+  // import_runs.id is a bigint, which the Neon serverless driver returns as a
+  // string ("3"); coerce it so the hand-off below carries a numeric run_id.
+  return run ? { id: Number(run.id) } : { error: json({ error: 'Could not create an import run' }, 500) };
 }
 
 export const POST: APIRoute = async ({ request, url }) => {
