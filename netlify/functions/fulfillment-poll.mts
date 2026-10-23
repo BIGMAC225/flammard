@@ -17,14 +17,16 @@ export const config = { schedule: '0 * * * *' };
 export default async (_req: Request): Promise<void> => {
   try {
     const db = sql();
-    const run = await one<{ id: number }>(
+    // import_runs.id is a bigint, which the Neon serverless driver returns as a
+    // string ("3"); Number() it so the trigger route receives a numeric run_id.
+    const run = await one<{ id: number | string }>(
       db`insert into import_runs (source, status, started_at) values ('api', 'running', now()) returning id`
     );
     if (!run) {
       console.log('[fulfillment-poll] could not create the import run');
       return;
     }
-    const runId = run.id;
+    const runId = Number(run.id);
 
     const secret = env('TAXDOME_WEBHOOK_SECRET');
     const origin = env('URL') || env('DEPLOY_PRIME_URL');

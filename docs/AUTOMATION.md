@@ -106,6 +106,8 @@ curl -X POST -H "Authorization: Bearer $TAXDOME_WEBHOOK_SECRET" https://<your-si
 
 It answers `202 { ok, accepted, run_id }` and the run appears in `import_runs` a minute later; `GET` on the same URL (same header) returns the latest API run's status.
 
+The flow charts — the Fulfillment overview's weekly sparkline and the Flow page's arrivals-vs-completions chart — read job dates from the latest snapshot per job, not from `job_events`: completions are dated by `job_snapshots.completed_at` and arrivals by `created_at` (requested from the API since 2026-10-24), which falls back to `intake_date`, then `start_date`, for rows captured before the column existed. `job_events` only reaches back to the first snapshot (2026-10-23), so it no longer drives these charts. The Flow page's cumulative flow diagram also carries a `Completed` band: at each date, the jobs whose latest snapshot has `completed_at` on or before that date.
+
 ## 5. Fulfillment CSV fallback (Zap 2)
 
 When the API poller can't run (or before it is turned on), the same daily snapshot arrives as a CSV: TaxDome's "Fulfillment Snapshot" R1 export. Zap 2 forwards the email to `/api/integrations/taxdome-jobs`, which parses the CSV, resolves pipelines, stages, clients and assignees by name against the reference tables and writes the day's `job_snapshots` rows (source `csv`). Rows whose pipeline/stage or account name isn't in the reference tables are skipped and listed in the run's `detail` (`unknown_stages`, `unknown_clients`, `unmatched_assignees`). A CSV run never overwrites a row the API run already wrote that day, so the two feeds can run side by side.

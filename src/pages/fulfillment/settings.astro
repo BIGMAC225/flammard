@@ -1,0 +1,210 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import { many, sql } from '../../lib/db';
+import { shapeSettings } from '../../lib/fulfillment-settings';
+import type {
+  SettingsActiveCount,
+  SettingsPipeline,
+  SettingsPipelineModel,
+  SettingsStage,
+  SettingsStageMap,
+} from '../../lib/fulfillment-settings';
+
+// The fulfillment settings page: hide pipelines you never work, map each
+// stage to a stage type and override its thresholds. One plain form posts to
+// /api/fulfillment/settings, which applies it in one transaction and
+// redirects back with ?saved=1 or ?error=… (gated by the middleware's
+// fulfillment.view rule, like every fulfillment page).
+
+const saved = Astro.url.searchParams.get('saved');
+const error = Astro.url.searchParams.get('error');
+
+interface RuleRow {
+  stage_type: string;
+  stuck_days: number;
+  critical_days: number;
+  ball_with: string;
+}
+
+let pipelines: SettingsPipelineModel[] = [];
+let rules: RuleRow[] = [];
+let loadError: string | null = null;
+try {
+  const db = sql();
+  const [pipelineRows, stageRows, mapRows, countRows, ruleRows] = await Promise.all([
+    many<SettingsPipeline>(db.query('select id, title, hidden from td_pipelines')),
+    many<SettingsStage>(db.query('select id, pipeline_id, title, stage_order from td_pipeline_stages')),
+    many<SettingsStageMap>(db.query('select pipeline_id, stage_id, stage_type, warn_days, stuck_days, ball_with from stage_type_map')),
+    many<SettingsActiveCount>(
+      db.query(`with latest as (select distinct on (job_id) * from job_snapshots order by job_id, captured_at desc)
+        select l.pipeline_id, count(*)::int as n
+        from latest l
+        join td_job_statuses st on st.id = l.status_id
+        where st.kind = 'active'
+        group by 1`)
+    ),
+    many<RuleRow>(db.query('select stage_type, stuck_days, critical_days, ball_with from stall_rules order by stage_type')),
+  ]);
+  pipelines = shapeSettings(pipelineRows, stageRows, mapRows, countRows);
+  rules = ruleRows;
+} catch (err) {
+  loadError = err instanceof Error ? err.message : String(err);
+}
+
+// The blank option is the unmapped choice, so 'unmapped' itself is not listed
+const options = rules.filter((r) => r.stage_type !== 'unmapped');
+const ruleFor = (stageType: string | null): RuleRow | undefined =>
+  rules.find((r) => r.stage_type === (stageType ?? 'unmapped'));
+const BALL_WITH = ['firm', 'client', 'government', 'none'];
+const hiddenCount = pipelines.filter((p) => p.hidden).length;
+---
+
+<Dashboard
+  eyebrow="Fulfillment"
+  title="Fulfillment settings"
+  description="Hide the pipelines you never work and set each stage's type, warn / stuck days and whose ball it is. Blank fields fall back to the stage type's rule."
+  back={{ href: '/fulfillment', label: 'Fulfillment' }}
+>
+  {saved && (
+    <div class="card bg-green-50 border-green-200 mb-8">
+      <p class="font-semibold text-green-900">Saved.</p>
+      <p class="text-sm text-green-900 mt-1">The pipelines, stage types and thresholds were applied.</p>
+    </div>
+  )}
+  {error && (
+    <div class="card bg-red-50 border-red-200 mb-8">
+      <p class="font-semibold text-red-800">Not saved</p>
+      <p class="text-sm text-red-800 mt-1">{error}</p>
+    </div>
+  )}
+  {loadError && (
+    <div class="card bg-amber-50 border-amber-200 mb-8">
+      <p class="font-semibold text-amber-900">Fulfillment settings are not available yet</p>
+      <p class="text-sm text-amber-900 mt-1">{loadError}</p>
+      <p class="text-sm text-amber-900 mt-1">Run db/upgrades/2026-10-24-fulfillment-settings.sql first (docs/AUTOMATION.md).</p>
+    </div>
+  )}
+
+  {!loadError && (
+    <form method="post" action="/api/fulfillment/settings" class="space-y-4">
+      <p class="text-sm text-ink-secondary">
+        {pipelines.length} pipelines ({hiddenCount} hidden). Warn days turns a stage amber, stuck days red; both default to the
+        stage type's rule, shown as the placeholder. Ball with “none” takes a stage out of every stall count.
+      </p>
+      {pipelines.map((p) => (
+        <div class="card p-0 overflow-hidden">
+          <div class="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-line/70">
+            <input type="hidden" name="pipeline" value={String(p.id)} />
+            <label class="inline-flex items-center gap-2 text-sm font-medium text-ink-secondary">
+              <input type="checkbox" name="hide" value={String(p.id)} checked={p.hidden} />
+              Hide
+            </label>
+            <span class={`font-medium ${p.hidden ? 'text-ink-muted' : 'text-ink-primary'}`}>{p.title}</span>
+            <span class="text-xs text-ink-muted">{p.active_jobs} active</span>
+          </div>
+          {p.stages.length > 0 &&
+            (p.hidden ? (
+              <details>
+                <summary class="px-4 py-2.5 text-sm text-ink-secondary cursor-pointer">
+                  {p.stages.length} stages (hidden pipeline)
+                </summary>
+                <div class="overflow-x-auto border-t border-line/70">
+                  <table class="table-brand">
+                    <thead>
+                      <tr><th>Stage</th><th>Stage type</th><th>Warn days</th><th>Stuck days</th><th>Ball with</th></tr>
+                    </thead>
+                    <tbody>
+                      {p.stages.map((s) => {
+                        const rule = ruleFor(s.stage_type);
+                        const key = `${String(p.id)}_${String(s.id)}`;
+                        return (
+                          <tr>
+                            <td class="whitespace-nowrap">
+                              <input type="hidden" name="stage" value={`${String(p.id)}:${String(s.id)}`} />
+                              {s.title}
+                              <span class="text-xs text-ink-muted ml-1.5">#{s.stage_order ?? '—'}</span>
+                            </td>
+                            <td>
+                              <select name={`type_${key}`} class="input">
+                                <option value="">— unmapped —</option>
+                                {options.map((r) => (
+                                  <option value={r.stage_type} selected={s.stage_type === r.stage_type}>{r.stage_type}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
+                              <input class="input w-24" type="number" min="1" max="365" name={`warn_${key}`} value={s.warn_days ?? ''} placeholder={rule ? String(rule.stuck_days) : ''} />
+                            </td>
+                            <td>
+                              <input class="input w-24" type="number" min="1" max="365" name={`stuck_${key}`} value={s.stuck_days ?? ''} placeholder={rule ? String(rule.critical_days) : ''} />
+                            </td>
+                            <td>
+                              <select name={`ball_${key}`} class="input">
+                                <option value="">default ({rule ? rule.ball_with : 'firm'})</option>
+                                {BALL_WITH.map((b) => (
+                                  <option value={b} selected={s.ball_with === b}>{b}</option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            ) : (
+              <div class="overflow-x-auto">
+                <table class="table-brand">
+                  <thead>
+                    <tr><th>Stage</th><th>Stage type</th><th>Warn days</th><th>Stuck days</th><th>Ball with</th></tr>
+                  </thead>
+                  <tbody>
+                    {p.stages.map((s) => {
+                      const rule = ruleFor(s.stage_type);
+                      const key = `${String(p.id)}_${String(s.id)}`;
+                      return (
+                        <tr>
+                          <td class="whitespace-nowrap">
+                            <input type="hidden" name="stage" value={`${String(p.id)}:${String(s.id)}`} />
+                            {s.title}
+                            <span class="text-xs text-ink-muted ml-1.5">#{s.stage_order ?? '—'}</span>
+                          </td>
+                          <td>
+                            <select name={`type_${key}`} class="input">
+                              <option value="">— unmapped —</option>
+                              {options.map((r) => (
+                                <option value={r.stage_type} selected={s.stage_type === r.stage_type}>{r.stage_type}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            <input class="input w-24" type="number" min="1" max="365" name={`warn_${key}`} value={s.warn_days ?? ''} placeholder={rule ? String(rule.stuck_days) : ''} />
+                          </td>
+                          <td>
+                            <input class="input w-24" type="number" min="1" max="365" name={`stuck_${key}`} value={s.stuck_days ?? ''} placeholder={rule ? String(rule.critical_days) : ''} />
+                          </td>
+                          <td>
+                            <select name={`ball_${key}`} class="input">
+                              <option value="">default ({rule ? rule.ball_with : 'firm'})</option>
+                              {BALL_WITH.map((b) => (
+                                <option value={b} selected={s.ball_with === b}>{b}</option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+        </div>
+      ))}
+      <div class="flex items-center gap-3">
+        <button type="submit" class="btn-primary">Save</button>
+        <a href="/fulfillment" class="btn-secondary text-sm">Back to fulfillment</a>
+      </div>
+    </form>
+  )}
+</Dashboard>

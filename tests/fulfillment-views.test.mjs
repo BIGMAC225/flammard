@@ -8,16 +8,20 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   agingPoints,
+  axisStride,
   board,
   cumulativeFlow,
   cycleStats,
   daysBetween,
   displayName,
   enrich,
+  eventsFromLatestSnapshots,
+  loadCompletionDates,
   loadCumulativeFlow,
   loadCycleRows,
   loadJobDetail,
   loadPeople,
+  loadPipelineJobCounts,
   loadPipelines,
   loadStageDwell,
   loadStages,
@@ -26,9 +30,12 @@ import {
   overview,
   overviewTotals,
   personWorkload,
+  pipelineLabel,
   ragFor,
   stageDwell,
   stuckList,
+  truncateLabel,
+  visiblePipelines,
   waitingOnClient,
   weeklyFlow,
 } from '../src/lib/fulfillment-views.ts';
@@ -48,7 +55,9 @@ test('the module exports every loader as a function', () => {
     loadPipelines,
     loadStages,
     loadPeople,
+    loadPipelineJobCounts,
     loadWeeklyEvents,
+    loadCompletionDates,
     loadCumulativeFlow,
     loadCycleRows,
     loadStageDwell,
@@ -56,6 +65,71 @@ test('the module exports every loader as a function', () => {
   ]) {
     assert.equal(typeof fn, 'function');
   }
+});
+
+// A db stub that records every query's SQL text; the loaders take a Db
+// argument, so their hidden-pipeline filtering is testable without Postgres.
+const stubDb = (calls) => ({ query: async (text, params) => { calls.push({ text, params }); return []; } });
+
+test('visiblePipelines drops hidden pipelines and keeps order', () => {
+  const list = [
+    { id: 3, title: 'DO NOT USE', hidden: true },
+    { id: 1, title: 'Tax Prep 2026', hidden: false },
+    { id: 2, title: 'Advisory 2026', hidden: false },
+  ];
+  assert.deepEqual(visiblePipelines(list), [
+    { id: 1, title: 'Tax Prep 2026', hidden: false },
+    { id: 2, title: 'Advisory 2026', hidden: false },
+  ]);
+  assert.deepEqual(visiblePipelines([]), []);
+});
+
+test('pipelineLabel: title with the active count, bare title when the count is unknown', () => {
+  const counts = new Map([
+    ['312', 42],
+    ['7', 0],
+  ]);
+  assert.equal(pipelineLabel({ id: 312, title: 'Tax Preparation', hidden: false }, counts), 'Tax Preparation (42)');
+  assert.equal(pipelineLabel({ id: 7, title: 'Empty', hidden: true }, counts), 'Empty (0)');
+  assert.equal(pipelineLabel({ id: 9, title: 'No snapshots', hidden: false }, counts), 'No snapshots');
+  // ids compare as strings (the bigint driver may return them as strings)
+  assert.equal(pipelineLabel({ id: '312', title: 'Tax Preparation', hidden: false }, counts), 'Tax Preparation (42)');
+});
+
+test('loadPipelineJobCounts: one grouped query over latest snapshots, keyed by String(pipeline_id)', async () => {
+  const calls = [];
+  const db = { query: async (text, params) => { calls.push({ text, params }); return [{ pipeline_id: 312, n: 42 }, { pipeline_id: '7', n: 0 }]; } };
+  const counts = await loadPipelineJobCounts(db);
+  assert.match(calls[0].text, /group by l\.pipeline_id/);
+  assert.match(calls[0].text, /filter \(where st\.kind = 'active'\)/);
+  assert.equal(counts.get('312'), 42);
+  assert.equal(counts.get('7'), 0);
+  assert.equal(counts.size, 2);
+});
+
+test('loadViewRows excludes hidden pipelines by default; includeHidden does not', async () => {
+  const calls = [];
+  await loadViewRows(stubDb(calls));
+  await loadViewRows(stubDb(calls), { includeHidden: true });
+  assert.match(calls[0].text, /not p\.hidden/);
+  assert.doesNotMatch(calls[1].text, /not p\.hidden/);
+});
+
+test('loadJobDetail may still show a hidden pipeline\'s job (direct link)', async () => {
+  const calls = [];
+  await loadJobDetail(stubDb(calls), 101);
+  assert.doesNotMatch(calls[0].text, /not p\.hidden/);
+});
+
+test('the cross-pipeline loaders exclude hidden pipelines in their SQL', async () => {
+  const calls = [];
+  const db = stubDb(calls);
+  await loadWeeklyEvents(db, '2026-07-22');
+  await loadCumulativeFlow(db, '2026-07-24');
+  await loadCompletionDates(db);
+  await loadCycleRows(db);
+  await loadStageDwell(db);
+  for (const call of calls) assert.match(call.text, /not p\.hidden/);
 });
 
 test('enrich computes stuck, critical, days_over, rag, past_internal_deadline, days_to_due', () => {
@@ -249,6 +323,63 @@ test('weeklyFlow: the weeks parameter shrinks the window', () => {
   assert.equal(rows.reduce((n, r) => n + r.completions, 0), 1);
 });
 
+test('eventsFromLatestSnapshots: a job completed 5 weeks ago lands in that week\'s completions', () => {
+  const rows = [
+    // arrived and completed the week of 2026-09-14, five weeks before TODAY's week (2026-10-19)
+    { job_id: 901, created_at: '2026-09-15T14:00:00Z', intake_date: null, start_date: null, completed_at: '2026-09-17T20:00:00Z' },
+    // created_at missing (row captured before the column existed): arrival falls back to intake_date, week of 2026-10-05
+    { job_id: 902, created_at: null, intake_date: '2026-10-07', start_date: '2026-10-09', completed_at: null },
+    // arrived and completed before sinceDate: neither event
+    { job_id: 903, created_at: '2026-05-01T09:00:00Z', intake_date: null, start_date: null, completed_at: '2026-06-01T09:00:00Z' },
+  ];
+  const weeks = weeklyFlow(eventsFromLatestSnapshots(rows, '2026-07-22'), TODAY, 13);
+  const week = (start) => weeks.find((r) => r.week_start === start);
+  assert.deepEqual(week('2026-09-14'), { week_start: '2026-09-14', arrivals: 1, completions: 1 });
+  assert.deepEqual(week('2026-10-05'), { week_start: '2026-10-05', arrivals: 1, completions: 0 });
+  assert.equal(weeks.reduce((n, r) => n + r.arrivals, 0), 2);
+  assert.equal(weeks.reduce((n, r) => n + r.completions, 0), 1);
+});
+
+test('eventsFromLatestSnapshots: each job_id counts once given duplicates; start_date is the last arrival fallback', () => {
+  // two snapshots of job 904: the first row per job wins, so the arrival comes
+  // from start_date (created_at and intake_date are null there)
+  const events = eventsFromLatestSnapshots([
+    { job_id: 904, created_at: null, intake_date: null, start_date: '2026-10-20', completed_at: '2026-10-21T12:00:00Z' },
+    { job_id: 904, created_at: '2026-10-19T08:00:00Z', intake_date: null, start_date: null, completed_at: '2026-10-21T12:00:00Z' },
+  ], '2026-07-22');
+  assert.deepEqual(events, [
+    { event_type: 'completed', at: '2026-10-21T12:00:00Z' },
+    { event_type: 'new', at: '2026-10-20' },
+  ]);
+  // a job with no dates at all produces nothing
+  assert.deepEqual(
+    eventsFromLatestSnapshots([{ job_id: 905, created_at: null, intake_date: null, start_date: null, completed_at: null }], '2026-07-22'),
+    []
+  );
+});
+
+test('cumulativeFlow with completions: the Completed series is cumulative and non-decreasing', () => {
+  const rows = [
+    { snapshot_date: '2026-10-20', stage_title: 'Intake', stage_order: 1, n: 5 },
+    { snapshot_date: '2026-10-21', stage_title: 'Intake', stage_order: 1, n: 4 },
+    { snapshot_date: '2026-10-22', stage_title: 'Intake', stage_order: 1, n: 6 },
+  ];
+  const completions = [
+    { completed_at: '2026-09-01 15:00:00+00' }, // before the window: still counted
+    { completed_at: '2026-10-20 15:00:00+00' },
+    { completed_at: '2026-10-20 16:00:00+00' },
+    { completed_at: '2026-10-22 15:00:00+00' },
+    { completed_at: null },
+  ];
+  const cfd = cumulativeFlow(rows, completions);
+  assert.deepEqual(cfd.stages, ['Intake', 'Completed']);
+  assert.deepEqual(cfd.series.Intake, [5, 4, 6]);
+  assert.deepEqual(cfd.series.Completed, [3, 3, 4]);
+  for (let i = 1; i < cfd.series.Completed.length; i++) {
+    assert.ok(cfd.series.Completed[i] >= cfd.series.Completed[i - 1], 'Completed is non-decreasing');
+  }
+});
+
 test('cumulativeFlow: ascending dates, stages by stage_order then title, zeros filled', () => {
   assert.deepEqual(cumulativeFlow(fixture.cfd), {
     dates: ['2026-10-20', '2026-10-21', '2026-10-22'],
@@ -281,6 +412,28 @@ test('cycleStats: nearest-rank median and p85, 7-day histogram buckets', () => {
 
 test('cycleStats: empty input', () => {
   assert.deepEqual(cycleStats([]), { count: 0, median: null, p85: null, histogram: [] });
+});
+
+test('axisStride: every bucket to 12, every other to 24, every Nth beyond; label count stays capped', () => {
+  assert.equal(axisStride(0), 1);
+  assert.equal(axisStride(7), 1);
+  assert.equal(axisStride(12), 1);
+  assert.equal(axisStride(13), 2);
+  assert.equal(axisStride(24), 2);
+  assert.equal(axisStride(25), 3);
+  assert.equal(axisStride(30), 3);
+  assert.equal(axisStride(40), 4);
+  for (let buckets = 1; buckets <= 60; buckets++) {
+    assert.ok(Math.ceil(buckets / axisStride(buckets)) <= 12, `${buckets} buckets keep at most 12 labels`);
+  }
+});
+
+test('truncateLabel: short text unchanged, long text cut to maxChars with an ellipsis', () => {
+  assert.equal(truncateLabel('Intake', 10), 'Intake');
+  assert.equal(truncateLabel('abcdefghij', 10), 'abcdefghij');
+  assert.equal(truncateLabel('abcdefghijk', 10), 'abcdefghi…');
+  assert.equal(truncateLabel('Client Documents', 10), 'Client Do…');
+  assert.equal(truncateLabel('Onboarding & KYC', 8), 'Onboard…');
 });
 
 test('stageDwell: sorted by stage_order nulls last, then title', () => {

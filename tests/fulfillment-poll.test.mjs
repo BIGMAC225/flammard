@@ -11,7 +11,9 @@ import {
   buildSnapshotUpsert,
   displayName,
   groupAssignments,
+  knownClientsMap,
   mapJobSnapshot,
+  presentClientIds,
   staleClientIds,
 } from '../src/lib/fulfillment-poll.ts';
 import { parsePollRequest, signPollJob, verifyPollJob } from '../src/lib/fulfillment-poll-job.ts';
@@ -73,6 +75,7 @@ test('mapJobSnapshot maps a full job, pipeline_id taken from the stage', () => {
     due_date: '2026-11-15',
     internal_deadline: null,
     completed_at: null,
+    created_at: '2026-10-01T14:00:00Z',
     time_budget: 5,
     time_tracked: 2,
     priority: 'high',
@@ -98,7 +101,7 @@ test('mapJobSnapshot: unknown status gives status_id null, missing assignments e
   assert.equal(row.priority, null);
 });
 
-test('buildSnapshotUpsert: multi-row insert with the plan-E conflict clause and $1..$44 in order', () => {
+test('buildSnapshotUpsert: multi-row insert with the plan-E conflict clause and $1..$46 in order', () => {
   const rows = [mapJobSnapshot(jobs[0], ctx), mapJobSnapshot(jobs[1], ctx)];
   const { text, params } = buildSnapshotUpsert(rows);
   const lower = text.toLowerCase();
@@ -107,16 +110,16 @@ test('buildSnapshotUpsert: multi-row insert with the plan-E conflict clause and 
   assert.match(lower, /::bigint\[/);
   assert.match(lower, /::text\[/);
   assert.match(lower, /::fulfillment_source/);
-  assert.equal(params.length, 2 * 22);
+  assert.equal(params.length, 2 * 23);
   assert.deepEqual(
     [...text.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])),
-    Array.from({ length: 44 }, (_, i) => i + 1)
+    Array.from({ length: 46 }, (_, i) => i + 1)
   );
-  // params follow the column order of each row (snapshot_date first, source 20th)
+  // params follow the column order of each row (snapshot_date first, source 21st)
   assert.equal(params[0], '2026-10-22');
-  assert.deepEqual(params[16], [12]); // assignee_ids
-  assert.deepEqual(params[17], ['Employee:12']); // assignee_actors
-  assert.equal(params[19], 'api'); // source
+  assert.deepEqual(params[17], [12]); // assignee_ids
+  assert.deepEqual(params[18], ['Employee:12']); // assignee_actors
+  assert.equal(params[20], 'api'); // source
 });
 
 test('staleClientIds: missing and old included, fresh skipped', () => {
@@ -177,4 +180,34 @@ test('parsePollRequest accepts a positive integer run_id, digits-only string inc
   assert.equal(parsePollRequest(JSON.stringify({ run_id: 'abc' })), null);
   assert.equal(parsePollRequest(JSON.stringify({ run_id: '-1' })), null);
   assert.equal(parsePollRequest(JSON.stringify({ run_id: '0' })), null);
+});
+
+test('runToUse parsing: digit-string and numeric run ids reuse the existing run, missing/invalid get none', () => {
+  // runToUse now decides through parsePollRequest (its insert path needs the
+  // DB): a valid body yields the existing run id, anything else falls through
+  // to a brand-new import_runs row.
+  assert.deepEqual(parsePollRequest('{"run_id":"21"}'), { run_id: 21 });
+  assert.deepEqual(parsePollRequest('{"run_id":21}'), { run_id: 21 });
+  assert.equal(parsePollRequest(''), null); // missing run_id
+  assert.equal(parsePollRequest('not json'), null);
+  assert.equal(parsePollRequest('{"run_id":"abc"}'), null); // invalid
+  assert.equal(parsePollRequest('{"run_id":-1}'), null);
+  assert.equal(parsePollRequest('{"run_id":0}'), null);
+});
+
+test('client staleness: a DB bigint id "123" (string) is the same client as API id 123', () => {
+  const now = new Date('2026-10-22T12:00:00Z');
+  // td_clients rows as Neon returns them: bigint ids as strings
+  const rows = [
+    { id: '123', synced_at: now.toISOString() }, // yesterday: fresh
+    { id: '124', synced_at: '2026-08-01T00:00:00Z' }, // 82 days ago: stale
+  ];
+  const known = knownClientsMap(rows);
+  assert.deepEqual([...known.keys()], [123, 124]); // keys are numbers
+  assert.deepEqual(staleClientIds([123], known, now), []); // matched: not refetched
+  assert.deepEqual(staleClientIds([124], known, now), [124]); // stale by age
+  assert.deepEqual(staleClientIds([125], known, now), [125]); // unknown
+  const present = presentClientIds([{ id: '123' }]);
+  assert.equal(present.has(123), true); // no placeholder for a known client
+  assert.equal(present.has(125), false); // counted in placeholder_clients
 });

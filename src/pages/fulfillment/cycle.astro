@@ -2,6 +2,7 @@
 import Dashboard from '../../layouts/Dashboard.astro';
 import { sql } from '../../lib/db';
 import {
+  axisStride,
   cycleStats,
   loadCycleRows,
   loadPipelines,
@@ -58,6 +59,9 @@ const barW = Math.min(28, Math.max(4, slotW - 8));
 const yBar = (v: number) => padT + plotH - (v / barMax) * plotH;
 const xBar = (i: number) => padL + i * slotW + (slotW - barW) / 2;
 const gridValues = [...new Set([0, Math.round(barMax / 2), barMax])];
+// X-axis labels: the bucket start only, one every `stride` buckets so they
+// never collide; the full range rides in each bar's <title> for hover.
+const stride = axisStride(stats.histogram.length);
 ---
 
 <Dashboard
@@ -119,6 +123,7 @@ const gridValues = [...new Set([0, Math.round(barMax / 2), barMax])];
           ))}
           {stats.histogram.map((b, i) => (
             <g>
+              <title>{`${b.from} to ${b.to} days`}</title>
               <rect
                 x={xBar(i)}
                 y={yBar(b.n)}
@@ -127,10 +132,12 @@ const gridValues = [...new Set([0, Math.round(barMax / 2), barMax])];
                 rx="2"
                 class="fill-accent"
               />
-              <text x={xBar(i) + barW / 2} y={chartH - 26} text-anchor="middle" font-size="9" class="fill-ink-secondary">{b.from}</text>
-              <text x={xBar(i) + barW / 2} y={chartH - 14} text-anchor="middle" font-size="9" class="fill-ink-muted">to {b.to}</text>
+              {i % stride === 0 && (
+                <text x={xBar(i) + barW / 2} y={chartH - 18} text-anchor="middle" font-size="9" class="fill-ink-secondary">{b.from}</text>
+              )}
             </g>
           ))}
+          <text x={padL + plotW / 2} y={chartH - 4} text-anchor="middle" font-size="9" class="fill-ink-muted">days from intake to completion</text>
         </svg>
       </div>
       <div class="card p-0 overflow-x-auto">

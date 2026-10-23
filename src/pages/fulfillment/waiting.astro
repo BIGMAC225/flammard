@@ -84,7 +84,7 @@ function ragBadge(row: EnrichedRow): { label: string; cls: string } {
               <td>
                 <span class="inline-flex gap-1">
                   <span class={ragBadge(row).cls}>{ragBadge(row).label}</span>
-                  <span class="badge-draft">client</span>
+                  <span class="badge-draft">{row.ball_with === 'government' ? 'government' : 'client'}</span>
                 </span>
               </td>
             </tr>

@@ -34,6 +34,7 @@ export interface TdJob {
   due_date: string | null;
   internal_deadline: string | null;
   completed_at: string | null;
+  created_at: string | null;
   time_budget: number | null;
   time_tracked: number | null;
   priority: string | null;
@@ -125,6 +126,7 @@ export interface JobSnapshotRow {
   due_date: string | null;
   internal_deadline: string | null;
   completed_at: string | null;
+  created_at: string | null;
   time_budget: number | null;
   time_tracked: number | null;
   priority: string | null;
@@ -164,6 +166,7 @@ export function mapJobSnapshot(job: TdJob, ctx: PollContext): MappedSnapshot {
     due_date: job.due_date,
     internal_deadline: job.internal_deadline,
     completed_at: job.completed_at,
+    created_at: job.created_at,
     time_budget: job.time_budget,
     time_tracked: job.time_tracked,
     priority: job.priority,
@@ -179,7 +182,7 @@ export function mapJobSnapshot(job: TdJob, ctx: PollContext): MappedSnapshot {
 const SNAPSHOT_COLUMNS = [
   'snapshot_date', 'job_id', 'job_name', 'pipeline_id', 'stage_id', 'status_id',
   'moved_at', 'status_changed_at', 'intake_date', 'start_date', 'due_date',
-  'internal_deadline', 'completed_at', 'time_budget', 'time_tracked', 'priority',
+  'internal_deadline', 'completed_at', 'created_at', 'time_budget', 'time_tracked', 'priority',
   'assignee_ids', 'assignee_actors', 'client_id', 'source', 'import_run_id', 'captured_at',
 ] as const satisfies readonly (keyof JobSnapshotRow)[];
 
@@ -216,6 +219,7 @@ export function buildSnapshotUpsert(rows: JobSnapshotRow[]): { text: string; par
       due_date = excluded.due_date,
       internal_deadline = excluded.internal_deadline,
       completed_at = excluded.completed_at,
+      created_at = excluded.created_at,
       priority = excluded.priority,
       assignee_ids = excluded.assignee_ids,
       assignee_actors = excluded.assignee_actors,
@@ -238,6 +242,21 @@ export function staleClientIds(seen: Iterable<number>, known: Map<number, Date>,
     if (!synced || synced.getTime() < cutoff) stale.push(id);
   }
   return stale.sort((a, b) => a - b);
+}
+
+/**
+ * td_clients rows as staleClientIds' known-map, ids normalized with Number():
+ * the Neon serverless driver returns bigint ids as strings ("123") while the
+ * API's client ids are numbers, and without the normalization the lookups
+ * below compare "123" with 123, miss, and refetch every client each hour.
+ */
+export function knownClientsMap(rows: Array<{ id: number | string; synced_at: string | Date }>): Map<number, Date> {
+  return new Map(rows.map((r) => [Number(r.id), new Date(r.synced_at)]));
+}
+
+/** td_clients ids as a numeric Set, for the same reason as knownClientsMap. */
+export function presentClientIds(rows: Array<{ id: number | string }>): Set<number> {
+  return new Set(rows.map((r) => Number(r.id)));
 }
 
 /** Removes anything that looks like a TaxDome API key before it is logged. */
@@ -344,6 +363,14 @@ export async function runFulfillmentPoll(runId: number, deps: PollDeps = {}): Pr
   };
 
   try {
+    // A previous run whose background function died (crash, timeout, lost
+    // hand-off) would stay 'running' forever; the background function is
+    // capped at 15 minutes, so anything older than 30 is abandoned, this run
+    // excepted.
+    await db`
+      update import_runs set status = 'error', finished_at = now(), error = 'abandoned'
+      where status = 'running' and started_at < now() - interval '30 minutes' and id <> ${runId}`;
+
     // The firm, for the run detail only (no key, no email)
     const me = await api.get<{ firm_name?: string; subdomain?: string; timezone?: string }>('/me');
     detail.firm_name = me.data.firm_name ?? null;
@@ -406,10 +433,10 @@ export async function runFulfillmentPoll(runId: number, deps: PollDeps = {}): Pr
     // valid for any the key cannot see
     const seenClientIds = [...new Set(jobsWalk.rows.map((j) => j.client_id))];
     const knownRows = seenClientIds.length
-      ? await many<{ id: number; synced_at: string }>(
+      ? await many<{ id: number | string; synced_at: string }>(
           db.query('select id, synced_at from td_clients where id = any($1::bigint[])', [seenClientIds]))
       : [];
-    const stale = staleClientIds(seenClientIds, new Map(knownRows.map((r) => [r.id, new Date(r.synced_at)])), capturedAt);
+    const stale = staleClientIds(seenClientIds, knownClientsMap(knownRows), capturedAt);
     if (stale.length) {
       const clients = await api.byIds<TdClient>('/clients', stale,
         { fields: ['id', 'account_name', 'company_name', 'account_type', 'code', 'lead', 'archived_at', 'tag_ids'] });
@@ -422,8 +449,8 @@ export async function runFulfillmentPoll(runId: number, deps: PollDeps = {}): Pr
       detail.clients_refreshed = clients.length;
     }
     const present = seenClientIds.length
-      ? new Set((await many<{ id: number }>(
-          db.query('select id from td_clients where id = any($1::bigint[])', [seenClientIds]))).map((r) => r.id))
+      ? presentClientIds(await many<{ id: number | string }>(
+          db.query('select id from td_clients where id = any($1::bigint[])', [seenClientIds])))
       : new Set<number>();
     const missingClientIds = seenClientIds.filter((id) => !present.has(id));
     if (missingClientIds.length) {

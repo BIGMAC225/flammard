@@ -55,14 +55,22 @@ export interface ViewRow {
   critical_days: number | null;
 }
 
-/** The view-rows query: the latest CTE and the joins every view loader uses. */
-function viewRowsSql(opts: { pipelineId?: number | string; activeOnly?: boolean; jobId?: number | string } = {}): {
+/**
+ * The view-rows query: the latest CTE and the joins every view loader uses.
+ * Hidden pipelines (td_pipelines.hidden, set on the settings page) are
+ * excluded by default; pass includeHidden for callers that may still show a
+ * hidden pipeline's job (the job detail, opened by direct link).
+ */
+function viewRowsSql(
+  opts: { pipelineId?: number | string; activeOnly?: boolean; jobId?: number | string; includeHidden?: boolean } = {}
+): {
   text: string;
   params: unknown[];
 } {
   const params: unknown[] = [];
   const where: string[] = [];
   if (opts.activeOnly !== false) where.push("st.kind = 'active'");
+  if (opts.includeHidden !== true) where.push('not p.hidden');
   if (opts.pipelineId != null) {
     params.push(opts.pipelineId);
     where.push(`l.pipeline_id = $${params.length}::bigint`);
@@ -79,8 +87,10 @@ function viewRowsSql(opts: { pipelineId?: number | string; activeOnly?: boolean;
       l.completed_at::text, st.kind, st.name as status_name, l.priority, l.assignee_actors,
       l.client_id, c.account_name,
       coalesce(m.stage_type, 'unmapped') as stage_type,
-      coalesce(sr.ball_with, 'firm') as ball_with,
-      ps.stage_limit_days, sr.stuck_days, sr.critical_days
+      coalesce(case m.ball_with when 'none' then 'excluded' else m.ball_with end, sr.ball_with, 'firm') as ball_with,
+      ps.stage_limit_days,
+      coalesce(m.warn_days, sr.stuck_days) as stuck_days,
+      coalesce(m.stuck_days, sr.critical_days) as critical_days
     from latest l
     join td_pipelines p on p.id = l.pipeline_id
     join td_pipeline_stages ps on ps.id = l.stage_id
@@ -96,11 +106,12 @@ function viewRowsSql(opts: { pipelineId?: number | string; activeOnly?: boolean;
  * The latest snapshot per job with every join the views need. activeOnly
  * defaults to true (st.kind = 'active'); pass false to also get completed and
  * archived jobs, which V8's cycle time needs. pipelineId narrows to one
- * pipeline (V2's board, V6's aging chart).
+ * pipeline (V2's board, V6's aging chart). Jobs in hidden pipelines are
+ * excluded unless includeHidden is true.
  */
 export async function loadViewRows(
   db: Db,
-  opts: { pipelineId?: number | string; activeOnly?: boolean } = {}
+  opts: { pipelineId?: number | string; activeOnly?: boolean; includeHidden?: boolean } = {}
 ): Promise<ViewRow[]> {
   const { text, params } = viewRowsSql(opts);
   return (await db.query(text, params)) as ViewRow[];
@@ -253,7 +264,7 @@ export interface BoardColumn {
   stage: StageLite;
   count: number;
   oldest: number;
-  /** True when the column's rows have ball_with 'client' (the shaded column); false with no rows. */
+  /** True when the column's rows have ball_with 'client' or 'government' (the shaded column); false with no rows. */
   client_typed: boolean;
   /** The column's jobs, days_in_stage descending. */
   cards: EnrichedRow[];
@@ -275,7 +286,7 @@ export function board(stages: StageLite[], rows: EnrichedRow[]): BoardColumn[] {
       stage,
       count: cards.length,
       oldest: cards.length ? cards[0].days_in_stage : 0,
-      client_typed: cards.length > 0 && cards.every((card) => card.ball_with === 'client'),
+      client_typed: cards.length > 0 && cards.every((card) => card.ball_with === 'client' || card.ball_with === 'government'),
       cards,
     };
   });
@@ -303,10 +314,10 @@ export function stuckList(rows: EnrichedRow[]): EnrichedRow[] {
 
 // ── V5: waiting on client ──────────────────────────────────────────────────
 
-/** The waiting-on-client list (V5): ball_with 'client', oldest first. */
+/** The waiting-on-client list (V5): ball_with 'client' or 'government' (both are client-side — the agency holds a government stage's ball), oldest first. */
 export function waitingOnClient(rows: EnrichedRow[]): EnrichedRow[] {
   return rows
-    .filter((row) => row.ball_with === 'client')
+    .filter((row) => row.ball_with === 'client' || row.ball_with === 'government')
     .sort((a, b) => b.days_in_stage - a.days_in_stage);
 }
 
@@ -375,7 +386,7 @@ export function personWorkload(rows: EnrichedRow[], people: PersonLite[]): Workl
       const agg = bucket(actor);
       agg.active_jobs++;
       if (row.ball_with === 'firm') agg.firm_jobs++;
-      if (row.ball_with === 'client') agg.client_jobs++;
+      if (row.ball_with === 'client' || row.ball_with === 'government') agg.client_jobs++;
       if (row.rag === 'amber' || row.rag === 'red') agg.stuck++;
       if (row.rag === 'red') agg.critical++;
       if (row.past_internal_deadline) agg.past_internal_deadline++;
@@ -438,7 +449,7 @@ export function agingPoints(rows: EnrichedRow[], stages: StageLite[]): AgingStag
 
 // ── V1 / V7: weekly flow ───────────────────────────────────────────────────
 
-/** One job_events row, reduced to what the weekly flow counts. */
+/** One arrival or completion point, reduced to what the weekly flow counts. */
 export interface EventLite {
   event_type: string;
   /** ISO timestamp; only the UTC date part is read. */
@@ -488,6 +499,41 @@ export function weeklyFlow(events: EventLite[], today: string, weeks = 13): Week
   return rows;
 }
 
+/** One job's latest snapshot, reduced to the dates the weekly flow counts. */
+export interface LatestSnapshotDates {
+  job_id: number | string;
+  created_at: string | null;
+  intake_date: string | null;
+  start_date: string | null;
+  completed_at: string | null;
+}
+
+/**
+ * Turns latest-snapshot rows into the EventLite points weeklyFlow counts: one
+ * 'completed' event per job at completed_at, one 'new' event at created_at
+ * falling back to intake_date then start_date (rows captured before the
+ * created_at column existed carry none), each only when its date is on or
+ * after sinceDate. Each job_id counts once even when passed twice (duplicate
+ * snapshots); the first row per job wins.
+ */
+export function eventsFromLatestSnapshots(rows: LatestSnapshotDates[], sinceDate: string): EventLite[] {
+  const events: EventLite[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = String(row.job_id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (row.completed_at != null && String(row.completed_at).slice(0, 10) >= sinceDate) {
+      events.push({ event_type: 'completed', at: row.completed_at });
+    }
+    const arrived = row.created_at ?? row.intake_date ?? row.start_date;
+    if (arrived != null && String(arrived).slice(0, 10) >= sinceDate) {
+      events.push({ event_type: 'new', at: arrived });
+    }
+  }
+  return events;
+}
+
 // ── V7: cumulative flow ────────────────────────────────────────────────────
 
 /** One job_snapshots-per-stage-and-date count, as loadCumulativeFlow returns. */
@@ -498,8 +544,23 @@ export interface CfdRow {
   n: number;
 }
 
-/** The cumulative flow diagram's data (V7): dates, stages, one series per stage. */
-export function cumulativeFlow(rows: CfdRow[]): { dates: string[]; stages: string[]; series: Record<string, number[]> } {
+/** One latest snapshot's completion date, as loadCompletionDates returns. */
+export interface CompletionRow {
+  completed_at: string | null;
+}
+
+/**
+ * The cumulative flow diagram's data (V7): dates, stages, one series per
+ * stage. With completions passed (loadCompletionDates), one extra 'Completed'
+ * series is appended last: its value at each date is the number of jobs whose
+ * latest snapshot has completed_at on or before that date (the cumulative done
+ * band; completions before the window still count, so the band starts at its
+ * historical value).
+ */
+export function cumulativeFlow(
+  rows: CfdRow[],
+  completions: CompletionRow[] = []
+): { dates: string[]; stages: string[]; series: Record<string, number[]> } {
   const dates = [...new Set(rows.map((row) => row.snapshot_date))].sort();
   const stages = [...new Map(rows.map((row) => [row.stage_title, row] as [string, CfdRow])).values()]
     .sort(byStageOrder<CfdRow>((row) => row.stage_title))
@@ -509,6 +570,13 @@ export function cumulativeFlow(rows: CfdRow[]): { dates: string[]; stages: strin
   for (const row of rows) {
     const i = dates.indexOf(row.snapshot_date);
     if (i >= 0) series[row.stage_title][i] = row.n;
+  }
+  const doneDays = completions
+    .filter((row) => row.completed_at != null)
+    .map((row) => String(row.completed_at).slice(0, 10));
+  if (dates.length && doneDays.length) {
+    stages.push('Completed');
+    series.Completed = dates.map((day) => doneDays.filter((done) => done <= day).length);
   }
   return { dates, stages, series };
 }
@@ -563,17 +631,79 @@ export function stageDwell(rows: StageDwellRow[]): StageDwellRow[] {
   return [...rows].sort(byStageOrder<StageDwellRow>((row) => row.stage_title));
 }
 
+// ── Chart labels ────────────────────────────────────────────────────────────
+
+/**
+ * The cycle-time histogram's x-axis label stride (V8): one short bucket-start
+ * label every `stride` buckets, so labels never collide. Up to maxLabels
+ * buckets every bucket gets a label; past that every other bucket, then every
+ * Nth, keeping the label count at or below maxLabels even at 30+ buckets.
+ */
+export function axisStride(bucketCount: number, maxLabels = 12): number {
+  return Math.max(1, Math.ceil(bucketCount / maxLabels));
+}
+
+/**
+ * Truncates a chart label to maxChars characters with an ellipsis, for crowded
+ * axes where full titles collide (the aging chart's stage labels); the caller
+ * shows the full text in a <title>.
+ */
+export function truncateLabel(text: string, maxChars: number): string {
+  return text.length > maxChars ? `${text.slice(0, Math.max(1, maxChars - 1))}…` : text;
+}
+
 // ── Loaders ────────────────────────────────────────────────────────────────
 
 /** One td_pipelines row as the overview's pipeline picker needs it. */
 export interface PipelineLite {
   id: number | string;
   title: string;
+  /** td_pipelines.hidden: true for junk pipelines the owner hid on the settings page. */
+  hidden: boolean;
 }
 
-/** The pipeline picker's list (V1): id and title, ordered by title. */
+/**
+ * The pipeline picker's list (V1): id, title and the hidden flag, visible
+ * pipelines first, then by title. Every pipeline is kept so callers that need
+ * the hidden ones (the settings page, a board URL naming one) still get them;
+ * pickers list visiblePipelines(this) instead.
+ */
 export async function loadPipelines(db: Db): Promise<PipelineLite[]> {
-  return (await db.query('select id, title from td_pipelines order by title')) as PipelineLite[];
+  return (await db.query('select id, title, hidden from td_pipelines order by hidden asc, title')) as PipelineLite[];
+}
+
+/** The visible pipelines of a loadPipelines list, order kept: what pickers and the board switcher list. */
+export function visiblePipelines(list: PipelineLite[]): PipelineLite[] {
+  return list.filter((p) => !p.hidden);
+}
+
+/**
+ * The board switcher's label (V2): the pipeline title with its active job
+ * count in parentheses ("Tax Preparation (312)"), or the bare title when the
+ * count is unknown (that pipeline has no snapshots yet).
+ */
+export function pipelineLabel(pipeline: PipelineLite, counts: ReadonlyMap<string, number>): string {
+  const n = counts.get(String(pipeline.id));
+  return n === undefined ? pipeline.title : `${pipeline.title} (${n})`;
+}
+
+/**
+ * Active job counts for the board switcher's labels: one grouped query over
+ * the latest snapshot per job, keyed by String(pipeline_id). A pipeline whose
+ * snapshots exist but hold no active jobs maps to 0; one with no snapshots at
+ * all is absent (pipelineLabel then shows the bare title). Hidden pipelines
+ * are counted too — the switcher's collapsed hidden group shows counts as
+ * well.
+ */
+export async function loadPipelineJobCounts(db: Db): Promise<Map<string, number>> {
+  const rows = (await db.query(
+    `with latest as (select distinct on (job_id) * from job_snapshots order by job_id, captured_at desc)
+     select l.pipeline_id, count(*) filter (where st.kind = 'active')::int as n
+     from latest l
+     left join td_job_statuses st on st.id = l.status_id
+     group by l.pipeline_id`
+  )) as { pipeline_id: number | string; n: number }[];
+  return new Map(rows.map((row) => [String(row.pipeline_id), row.n]));
 }
 
 /** One pipeline's stages (V2, V6): ordered by stage_order, nulls last, then title. */
@@ -591,25 +721,48 @@ export async function loadPeople(db: Db): Promise<PersonLite[]> {
   )) as PersonLite[];
 }
 
-/** The events the weekly flow counts (V1, V7) from sinceDate on. */
+/**
+ * The arrival and completion points the weekly flow counts (V1's sparkline,
+ * V7's flow chart): the latest snapshot per job shaped by
+ * eventsFromLatestSnapshots — completions at completed_at, arrivals at
+ * created_at with the intake_date / start_date fallback — not job_events,
+ * which only reaches back to the first snapshot. Hidden pipelines are
+ * excluded.
+ */
 export async function loadWeeklyEvents(db: Db, sinceDate: string): Promise<EventLite[]> {
-  return (await db.query(
-    "select event_type, at::text as at from job_events where event_type in ('new', 'completed', 'archived') and at >= $1::date",
-    [sinceDate]
-  )) as EventLite[];
+  const rows = (await db.query(
+    `with latest as (select distinct on (job_id) * from job_snapshots order by job_id, captured_at desc)
+     select l.job_id, l.created_at::text, l.intake_date::text, l.start_date::text, l.completed_at::text
+     from latest l
+     join td_pipelines p on p.id = l.pipeline_id
+     where not p.hidden`
+  )) as LatestSnapshotDates[];
+  return eventsFromLatestSnapshots(rows, sinceDate);
 }
 
-/** Snapshot counts per date and stage (V7) from sinceDate on. */
+/** Snapshot counts per date and stage (V7) from sinceDate on; hidden pipelines are excluded. */
 export async function loadCumulativeFlow(db: Db, sinceDate: string): Promise<CfdRow[]> {
   return (await db.query(
     `select s.snapshot_date::text, ps.title as stage_title, ps.stage_order, count(*)::int as n
      from job_snapshots s
      join td_pipeline_stages ps on ps.id = s.stage_id
-     where s.snapshot_date >= $1::date
+     join td_pipelines p on p.id = s.pipeline_id
+     where s.snapshot_date >= $1::date and not p.hidden
      group by 1, 2, 3
      order by 1`,
     [sinceDate]
   )) as CfdRow[];
+}
+
+/** Completion dates (completed_at) from the latest snapshot per job (V7); hidden pipelines are excluded. */
+export async function loadCompletionDates(db: Db): Promise<CompletionRow[]> {
+  return (await db.query(
+    `with latest as (select distinct on (job_id) * from job_snapshots order by job_id, captured_at desc)
+     select l.completed_at::text
+     from latest l
+     join td_pipelines p on p.id = l.pipeline_id
+     where l.completed_at is not null and not p.hidden`
+  )) as CompletionRow[];
 }
 
 /** One completed job's cycle: days from intake to completion (V8). */
@@ -619,23 +772,25 @@ export interface CycleRow {
   cycle_days: number;
 }
 
-/** Completed jobs' intake-to-completion days, latest snapshot per job (V8). */
+/** Completed jobs' intake-to-completion days, latest snapshot per job (V8); hidden pipelines are excluded. */
 export async function loadCycleRows(db: Db): Promise<CycleRow[]> {
   return (await db.query(
     `with latest as (select distinct on (job_id) * from job_snapshots order by job_id, captured_at desc)
      select l.job_id, l.pipeline_id, (l.completed_at::date - l.intake_date) as cycle_days
      from latest l
-     where l.completed_at is not null and l.intake_date is not null`
+     join td_pipelines p on p.id = l.pipeline_id
+     where l.completed_at is not null and l.intake_date is not null and not p.hidden`
   )) as CycleRow[];
 }
 
-/** Average dwell per stage over closed intervals (V6's context table). */
+/** Average dwell per stage over closed intervals (V6's context table); hidden pipelines are excluded. */
 export async function loadStageDwell(db: Db): Promise<StageDwellRow[]> {
   return (await db.query(
     `select ps.title as stage_title, ps.stage_order, round(avg(si.days))::int as avg_days, count(*)::int as n
      from stage_intervals si
      join td_pipeline_stages ps on ps.id = si.stage_id
-     where si.exited_at is not null
+     join td_pipelines p on p.id = ps.pipeline_id
+     where si.exited_at is not null and not p.hidden
      group by 1, 2`
   )) as StageDwellRow[];
 }
@@ -691,11 +846,12 @@ export interface JobDetail {
 
 /**
  * One job's full detail: the latest snapshot (via the same CTE and joins as
- * loadViewRows, activeOnly false), its snapshot history, its events, its
+ * loadViewRows, activeOnly false and includeHidden — a hidden pipeline's job
+ * may still be opened by direct link), its snapshot history, its events, its
  * stage intervals and its alerts. Null when the job has no snapshot at all.
  */
 export async function loadJobDetail(db: Db, jobId: number | string): Promise<JobDetail | null> {
-  const { text, params } = viewRowsSql({ activeOnly: false, jobId });
+  const { text, params } = viewRowsSql({ activeOnly: false, jobId, includeHidden: true });
   const [latest] = (await db.query(text, params)) as ViewRow[];
   if (!latest) return null;
   const [history, events, intervals, alerts] = await Promise.all([

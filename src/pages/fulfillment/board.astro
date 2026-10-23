@@ -7,9 +7,13 @@ import {
   displayName,
   enrich,
   loadPeople,
+  loadPipelineJobCounts,
   loadPipelines,
   loadStages,
   loadViewRows,
+  pipelineLabel,
+  truncateLabel,
+  visiblePipelines,
 } from '../../lib/fulfillment-views';
 import type {
   AgingStage,
@@ -26,13 +30,17 @@ let selected: PipelineLite | null = null;
 let stages: StageLite[] = [];
 let rows: EnrichedRow[] = [];
 let people: PersonLite[] = [];
+let counts: Map<string, number> = new Map();
 let loadError: string | null = null;
 try {
   const db = sql();
   pipelines = await loadPipelines(db);
+  counts = await loadPipelineJobCounts(db);
   people = await loadPeople(db);
   const wanted = Astro.url.searchParams.get('pipeline');
-  selected = pipelines.find((p) => String(p.id) === wanted) ?? pipelines[0] ?? null;
+  // A URL naming a hidden pipeline still renders it; the default is the first
+  // visible one (loadPipelines lists visible first, but not when all are hidden).
+  selected = pipelines.find((p) => String(p.id) === wanted) ?? visiblePipelines(pipelines)[0] ?? null;
   if (selected) {
     stages = await loadStages(db, selected.id);
     rows = enrich(await loadViewRows(db, { pipelineId: selected.id }));
@@ -44,7 +52,14 @@ try {
   stages = [];
   rows = [];
   people = [];
+  counts = new Map();
 }
+
+// The board switcher lists visible pipelines with their active job counts;
+// hidden ones sit in a collapsed group below, still reachable by URL and
+// through the settings page.
+const visible = visiblePipelines(pipelines);
+const hidden = pipelines.filter((p) => p.hidden);
 
 // Columns and aging series both come back in stage_order; never re-sort here.
 const columns: BoardColumn[] = board(stages, rows);
@@ -102,7 +117,7 @@ const gridValues = [...new Set([0, Math.round(agingMax / 2), agingMax])];
   {selected && (
     <div>
       <div class="flex flex-wrap gap-2 mb-6">
-        {pipelines.map((p) => (
+        {visible.map((p) => (
           <a
             href={`/fulfillment/board?pipeline=${String(p.id)}`}
             class={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
@@ -110,10 +125,29 @@ const gridValues = [...new Set([0, Math.round(agingMax / 2), agingMax])];
             }`}
             aria-current={String(p.id) === String(selected?.id) ? 'page' : undefined}
           >
-            {p.title}
+            {pipelineLabel(p, counts)}
           </a>
         ))}
       </div>
+
+      {hidden.length > 0 && (
+        <details class="mb-6">
+          <summary class="cursor-pointer select-none text-sm text-ink-muted">Hidden pipelines</summary>
+          <div class="flex flex-wrap gap-2 mt-3">
+            {hidden.map((p) => (
+              <a
+                href={`/fulfillment/board?pipeline=${String(p.id)}`}
+                class={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  String(p.id) === String(selected?.id) ? 'bg-accent text-white' : 'bg-bg-surface text-ink-muted hover:text-ink-primary'
+                }`}
+                aria-current={String(p.id) === String(selected?.id) ? 'page' : undefined}
+              >
+                {pipelineLabel(p, counts)}
+              </a>
+            ))}
+          </div>
+        </details>
+      )}
 
       {rows.length === 0 && (
         <div class="card text-center py-8 mb-6">
@@ -205,7 +239,7 @@ const gridValues = [...new Set([0, Math.round(agingMax / 2), agingMax])];
                   {s.points.map((p, j) => (
                     <circle cx={xStage(i) + ((j % 3) - 1) * 8} cy={yAge(p.days_in_stage)} r="4" class={RAG_FILL[p.rag]} />
                   ))}
-                  <text x={xStage(i)} y={chartH - 30} text-anchor="middle" font-size="10" class="fill-ink-secondary">{s.stage_title}</text>
+                  <text x={xStage(i)} y={chartH - 30} text-anchor="middle" font-size="10" class="fill-ink-secondary">{truncateLabel(s.stage_title, 10)}<title>{s.stage_title}</title></text>
                   <text x={xStage(i)} y={chartH - 16} text-anchor="middle" font-size="9" class="fill-ink-muted">
                     {s.points.length} {s.points.length === 1 ? 'job' : 'jobs'}
                   </text>
