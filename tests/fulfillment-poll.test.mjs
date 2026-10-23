@@ -160,8 +160,12 @@ test('a taxdome-job signature is not valid for the poll job (different derivatio
   );
 });
 
-test('parsePollRequest accepts only a positive integer run_id', () => {
+test('parsePollRequest accepts a positive integer run_id, digits-only string included', () => {
   assert.deepEqual(parsePollRequest(JSON.stringify({ run_id: 7 })), { run_id: 7 });
+  assert.deepEqual(parsePollRequest(JSON.stringify({ run_id: 3 })), { run_id: 3 });
+  // the Neon serverless driver returns bigint ids as strings ("3")
+  assert.deepEqual(parsePollRequest(JSON.stringify({ run_id: '3' })), { run_id: 3 });
+  assert.deepEqual(parsePollRequest(JSON.stringify({ run_id: '7' })), { run_id: 7 });
   assert.equal(parsePollRequest(''), null);
   assert.equal(parsePollRequest('not json'), null);
   assert.equal(parsePollRequest(JSON.stringify({})), null);
@@ -169,5 +173,8 @@ test('parsePollRequest accepts only a positive integer run_id', () => {
   assert.equal(parsePollRequest(JSON.stringify({ run_id: 0 })), null);
   assert.equal(parsePollRequest(JSON.stringify({ run_id: -1 })), null);
   assert.equal(parsePollRequest(JSON.stringify({ run_id: 1.5 })), null);
-  assert.equal(parsePollRequest(JSON.stringify({ run_id: '7' })), null);
+  assert.equal(parsePollRequest(JSON.stringify({ run_id: 3.5 })), null);
+  assert.equal(parsePollRequest(JSON.stringify({ run_id: 'abc' })), null);
+  assert.equal(parsePollRequest(JSON.stringify({ run_id: '-1' })), null);
+  assert.equal(parsePollRequest(JSON.stringify({ run_id: '0' })), null);
 });
