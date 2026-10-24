@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { json } from '../../../lib/api';
 import { one, sql } from '../../../lib/db';
 import { env } from '../../../lib/env';
-import { POLL_JOB_HEADER, signPollJob } from '../../../lib/fulfillment-poll-job';
+import { parsePollRequest, POLL_JOB_HEADER, signPollJob } from '../../../lib/fulfillment-poll-job';
 
 // Trigger for the fulfillment poller (implementation plan, section J step 6).
 // The scheduled function netlify/functions/fulfillment-poll.mts posts here
@@ -24,16 +24,17 @@ const bearer = (request: Request): string => (request.headers.get('authorization
 
 /** A positive integer run_id from an optional JSON body, else a brand-new 'running' run. */
 async function runToUse(request: Request): Promise<{ id: number } | { error: Response }> {
-  let body: unknown = {};
+  let raw = '';
   try {
-    body = await request.json();
+    raw = await request.text();
   } catch {
     /* no body is fine: curl with no -d */
   }
-  const given = (body as { run_id?: unknown } | null)?.run_id;
-  if (typeof given === 'number' && Number.isInteger(given) && given > 0 && given <= Number.MAX_SAFE_INTEGER) {
-    return { id: given };
-  }
+  // parsePollRequest accepts the Neon driver's bigint ids as digit strings
+  // ("21") as well as numbers, so the scheduler's run row is reused instead of
+  // a second one being inserted and the first left 'running' forever.
+  const parsed = parsePollRequest(raw);
+  if (parsed) return { id: parsed.run_id };
   const run = await one<{ id: number | string }>(
     sql()`insert into import_runs (source, status, started_at) values ('api', 'running', now()) returning id`
   );

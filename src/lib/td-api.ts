@@ -81,6 +81,7 @@ export const JOB_FIELDS: string[] = [
   'due_date',
   'internal_deadline',
   'completed_at',
+  'created_at',
   'time_budget',
   'time_tracked',
   'priority',

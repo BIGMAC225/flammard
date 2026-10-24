@@ -4,11 +4,12 @@ import { sql } from '../../lib/db';
 import { todayLocal } from '../../lib/dates';
 import {
   cumulativeFlow,
+  loadCompletionDates,
   loadCumulativeFlow,
   loadWeeklyEvents,
   weeklyFlow,
 } from '../../lib/fulfillment-views';
-import type { CfdRow, EventLite, WeekRow } from '../../lib/fulfillment-views';
+import type { CfdRow, CompletionRow, EventLite, WeekRow } from '../../lib/fulfillment-views';
 
 const today = todayLocal();
 // weeklyFlow buckets the 13 Monday-starting weeks ending this week, so fetch
@@ -18,18 +19,21 @@ const since90d = new Date(Date.parse(`${today}T00:00:00Z`) - 90 * 86_400_000).to
 
 let flow: WeekRow[] = [];
 let cfdRows: CfdRow[] = [];
+let completions: CompletionRow[] = [];
 let loadError: string | null = null;
 try {
   const db = sql();
   flow = weeklyFlow(await loadWeeklyEvents(db, since13w), today, 13);
   cfdRows = await loadCumulativeFlow(db, since90d);
+  completions = await loadCompletionDates(db);
 } catch (err) {
   loadError = err instanceof Error ? err.message : String(err);
   flow = [];
   cfdRows = [];
+  completions = [];
 }
 
-const cfd = cumulativeFlow(cfdRows);
+const cfd = cumulativeFlow(cfdRows, completions);
 const flowEmpty = flow.every((w) => w.arrivals === 0 && w.completions === 0);
 const bothEmpty = flowEmpty && cfd.dates.length === 0;
 

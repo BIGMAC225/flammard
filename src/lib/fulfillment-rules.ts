@@ -346,7 +346,8 @@ export function buildDigests(input: DigestInput): Digest[] {
       if (alert.alert_type === 'stuck') {
         (dayOf(alert.opened_at) === input.today ? digest.newly_stuck : digest.still_stuck).push(alert);
       }
-      if (alert.ball_with === 'client') digest.client_chases.push(alert);
+      // 'government' counts as client-side here too: the agency holds the ball, not the firm
+      if (alert.ball_with === 'client' || alert.ball_with === 'government') digest.client_chases.push(alert);
     }
   }
   return [...buckets.values()];
@@ -430,23 +431,28 @@ export async function runFulfillmentRules(options: RulesOptions): Promise<RulesR
   const db = sql();
 
   // 1. The latest snapshot per active job, with the stall rule its stage
-  // resolves to. stage_type_map is empty today, so coalesce gives every stage
-  // the 'unmapped' stall_rules row (stuck 7, critical 10, ball_with firm)
-  // until Russell fills it; stages mapped to 'on_hold' come back excluded.
+  // resolves to: stage_type_map's warn_days / stuck_days / ball_with override
+  // the stall_rules row per stage ('none' means excluded), a stage with no map
+  // row falls back to 'unmapped' (stuck 7, critical 10, ball_with firm).
+  // Jobs in hidden pipelines are excluded, so their alerts stop being desired
+  // and reconcile resolves the ones already open.
   const rows = await many<EvalRow>(
     db.query(`
       with latest as (select distinct on (job_id) * from job_snapshots order by job_id, captured_at desc)
       select l.job_id, l.pipeline_id, l.stage_id, l.snapshot_date, l.days_in_stage, l.due_date,
         l.internal_deadline, l.assignee_actors, st.kind,
         coalesce(m.stage_type, 'unmapped') as stage_type,
-        coalesce(sr.ball_with, 'firm') as ball_with,
-        ps.stage_limit_days, sr.stuck_days, sr.critical_days
+        coalesce(case m.ball_with when 'none' then 'excluded' else m.ball_with end, sr.ball_with, 'firm') as ball_with,
+        ps.stage_limit_days,
+        coalesce(m.warn_days, sr.stuck_days) as stuck_days,
+        coalesce(m.stuck_days, sr.critical_days) as critical_days
       from latest l
       join td_pipeline_stages ps on ps.id = l.stage_id
+      join td_pipelines p on p.id = l.pipeline_id
       left join td_job_statuses st on st.id = l.status_id
       left join stage_type_map m on m.stage_id = l.stage_id
       left join stall_rules sr on sr.stage_type = coalesce(m.stage_type, 'unmapped')
-      where st.kind = 'active'`)
+      where st.kind = 'active' and not p.hidden`)
   );
 
   // 2. What the rules want open: one Desired per job alert, plus data health
@@ -553,7 +559,7 @@ export async function runFulfillmentRules(options: RulesOptions): Promise<RulesR
           join td_pipeline_stages ps on ps.id = l.stage_id
           join td_pipelines p on p.id = l.pipeline_id
           left join td_clients c on c.id = l.client_id
-          where l.job_id = any($1::bigint[])`,
+          where l.job_id = any($1::bigint[]) and not p.hidden`,
           [alertJobIds]
         )
       )
