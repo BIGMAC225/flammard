@@ -1,5 +1,5 @@
 import type { CompanySettings } from '../types';
-import { one, sql } from './db';
+import { one, sql } from './db.ts';
 
 // Company settings: one row (id = true) in company_settings. Server only —
 // the full row includes the recap webhook secret; send publicSettings() to

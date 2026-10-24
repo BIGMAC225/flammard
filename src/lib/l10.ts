@@ -1,5 +1,5 @@
-import { many, one, sql } from './db';
-import { teamLabel } from './teams';
+import { many, one, sql } from './db.ts';
+import { teamLabel } from './teams.ts';
 import type { CascadingMessage, Issue, MeetingRating, MeetingRock, Todo } from '../types';
 
 // The standing lists an L10 runs from (Rocks, To-dos, Issues) and the

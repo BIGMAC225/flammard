@@ -1,7 +1,7 @@
 import type { AstroCookies } from 'astro';
-import { isAuthenticated } from './auth';
-import { one, sql } from './db';
-import { can, type Permission } from './permissions';
+import { isAuthenticated } from './auth.ts';
+import { one, sql } from './db.ts';
+import { can, type Permission } from './permissions.ts';
 import type { Principal } from '../types';
 
 export function json(data: unknown, status = 200): Response {

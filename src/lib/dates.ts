@@ -1,4 +1,4 @@
-import { env } from './env';
+import { env } from './env.ts';
 
 // The firm's local calendar date, not UTC — periods start and end on local
 // days, and a UTC rollover in the evening would misclassify them.

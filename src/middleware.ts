@@ -13,7 +13,8 @@ import { isTeam, setTeam, TEAM_COOKIE } from './lib/teams';
 // Route handlers still call requireAuth(cookies); that's now a second check.
 
 const PUBLIC_EXACT = new Set(['/', '/login', '/api/auth/login', '/api/auth/setup', '/api/auth/logout']);
-const isPublic = (p: string) => PUBLIC_EXACT.has(p) || p.startsWith('/setup/') || p.startsWith('/api/integrations/');
+const isPublic = (p: string) =>
+  PUBLIC_EXACT.has(p) || p.startsWith('/setup/') || p.startsWith('/api/integrations/') || p.startsWith('/api/export/');
 const isGuarded = (p: string) => p === '/dashboard' || p.startsWith('/dashboard/') || p === '/fulfillment' || p.startsWith('/fulfillment/') || p.startsWith('/api/');
 const isSafeMethod = (m: string) => m === 'GET' || m === 'HEAD' || m === 'OPTIONS';
 
