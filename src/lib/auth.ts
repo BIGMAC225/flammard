@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { AstroCookies } from 'astro';
-import { env } from './env';
+import { env } from './env.ts';
 
 // Session cookie. Two signed formats are accepted:
 //
