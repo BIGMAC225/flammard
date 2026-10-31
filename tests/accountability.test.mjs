@@ -7,9 +7,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAX_ROLES,
+  allowedParentIds,
   buildLayout,
+  descendantIds,
   edgesFromSeats,
   normalizePeople,
+  pickDropTarget,
   sanitizeRoles,
   validateReparent,
 } from '../src/lib/accountability.ts';
@@ -92,6 +95,68 @@ test('validateReparent allows the root staying root and valid moves up the tree'
   assert.deepEqual(validateReparent(TREE, 'visionary', null), { ok: true });
   assert.deepEqual(validateReparent(TREE, 'tax-team', 'integrator'), { ok: true });
   assert.deepEqual(validateReparent(TREE, 'operations', 'visionary'), { ok: true });
+});
+
+// ── descendantIds / allowedParentIds ─────────────────────────────────────────
+
+test('descendantIds returns the seat and everything below it, nothing above or beside', () => {
+  assert.deepEqual([...descendantIds(TREE, 'integrator')].sort(), ['integrator', 'operations', 'tax-team']);
+  assert.deepEqual([...descendantIds(TREE, 'tax-team')], ['tax-team']);
+  assert.deepEqual(
+    [...descendantIds(TREE, 'visionary')].sort(),
+    TREE.map((s) => s.id).sort()
+  );
+});
+
+test('allowedParentIds excludes the seat and its descendants, keeps everyone else in order', () => {
+  assert.deepEqual(allowedParentIds(TREE, 'operations'), ['visionary', 'integrator']);
+  assert.deepEqual(allowedParentIds(TREE, 'tax-team'), ['visionary', 'integrator', 'operations']);
+  // The root has every seat below it, so nothing may parent it
+  assert.deepEqual(allowedParentIds(TREE, 'visionary'), []);
+});
+
+// ── pickDropTarget ───────────────────────────────────────────────────────────
+// Cards 240 wide, ranks 260 apart (the dagre layout: 200-high slots + 60 gap).
+
+const DRAG_RECTS = {
+  visionary: { x: 0, y: 0, width: 240, height: 120 },
+  integrator: { x: 0, y: 260, width: 240, height: 120 },
+  operations: { x: -280, y: 520, width: 240, height: 120 },
+  'tax-team': { x: -280, y: 780, width: 240, height: 120 },
+};
+
+test('pickDropTarget returns the card under the pointer', () => {
+  assert.equal(pickDropTarget(TREE, 'operations', { x: 120, y: 300 }, DRAG_RECTS), 'integrator');
+  assert.equal(pickDropTarget(TREE, 'operations', { x: 120, y: 30 }, DRAG_RECTS), 'visionary');
+});
+
+test('pickDropTarget never returns the dragged seat or one of its descendants', () => {
+  // Pointer over the dragged seat's own card
+  assert.equal(pickDropTarget(TREE, 'operations', { x: -160, y: 560 }, DRAG_RECTS), null);
+  // Pointer over tax-team, a descendant of the dragged integrator
+  assert.equal(pickDropTarget(TREE, 'integrator', { x: -160, y: 800 }, DRAG_RECTS), null);
+});
+
+test('pickDropTarget: pointer over empty canvas or a seat with no rect gives null', () => {
+  // The gap between ranks
+  assert.equal(pickDropTarget(TREE, 'operations', { x: 120, y: 460 }, DRAG_RECTS), null);
+  // integrator's rect missing (not measured yet); visionary does not contain the pointer
+  assert.equal(
+    pickDropTarget(TREE, 'operations', { x: 120, y: 300 }, { ...DRAG_RECTS, integrator: undefined }),
+    null
+  );
+});
+
+test('pickDropTarget treats the card bounds as inclusive', () => {
+  const seats = [
+    { id: 'a', parent_id: null },
+    { id: 'b', parent_id: 'a' },
+  ];
+  const rects = { a: { x: 0, y: 0, width: 240, height: 120 } };
+  assert.equal(pickDropTarget(seats, 'b', { x: 0, y: 0 }, rects), 'a');
+  assert.equal(pickDropTarget(seats, 'b', { x: 240, y: 120 }, rects), 'a');
+  assert.equal(pickDropTarget(seats, 'b', { x: 241, y: 120 }, rects), null);
+  assert.equal(pickDropTarget(seats, 'b', { x: 240, y: 121 }, rects), null);
 });
 
 // ── buildLayout ─────────────────────────────────────────────────────────────

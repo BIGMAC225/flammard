@@ -100,6 +100,61 @@ export function validateReparent(
   return { ok: true };
 }
 
+// ── Drag to re-parent and the Reports-to list ───────────────────────────────
+
+/** A seat and every seat below it (what a delete removes, what can never be its parent). */
+export function descendantIds(seats: ReparentSeat[], id: string): Set<string> {
+  const out = new Set<string>([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const s of seats) {
+      if (s.parent_id && out.has(s.parent_id) && !out.has(s.id)) {
+        out.add(s.id);
+        grew = true;
+      }
+    }
+  }
+  return out;
+}
+
+/** Every seat that may become `seatId`'s parent: all seats but itself and its descendants. */
+export function allowedParentIds(seats: ReparentSeat[], seatId: string): string[] {
+  const banned = descendantIds(seats, seatId);
+  return seats.filter((s) => !banned.has(s.id)).map((s) => s.id);
+}
+
+/** A card's box in flow coordinates: top-left corner plus the rendered size. */
+export type DropRect = { x: number; y: number; width: number; height: number };
+
+/**
+ * The seat whose card sits under the drag pointer, ignoring the dragged seat
+ * and its descendants (they can never be the new parent; the caller still
+ * re-checks with validateReparent). Null when the pointer is over empty canvas.
+ */
+export function pickDropTarget(
+  seats: ReparentSeat[],
+  draggedId: string,
+  pointer: { x: number; y: number },
+  rects: Record<string, DropRect>
+): string | null {
+  const banned = descendantIds(seats, draggedId);
+  for (const seat of seats) {
+    if (banned.has(seat.id)) continue;
+    const rect = rects[seat.id];
+    if (!rect) continue;
+    if (
+      pointer.x >= rect.x &&
+      pointer.x <= rect.x + rect.width &&
+      pointer.y >= rect.y &&
+      pointer.y <= rect.y + rect.height
+    ) {
+      return seat.id;
+    }
+  }
+  return null;
+}
+
 // ── Layout and edges ────────────────────────────────────────────────────────
 
 /** Card size the layout assumes; v1 stores no x/y, the layout is computed. */
