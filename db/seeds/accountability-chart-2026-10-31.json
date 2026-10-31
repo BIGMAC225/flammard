@@ -1,0 +1,398 @@
+{
+  "charts": [
+    {
+      "key": "current",
+      "name": "J. Heath & Co. Accountability Chart (current)",
+      "status": "current",
+      "source": "company/people/Accountability Chart - EOS One export 2026-10-07.md (seat structure, reporting lines, roles) plus company/people/accountability-chart-current.md (living record). Where the two differ the living record won: Jennifer Heath (not the export's \"Jennifer Louise\"; same person, decisions log 2026-10-07) and Russell Heath + Jennifer Heath on Finance/Administration (the export still shows Alex Caluda, who left 2026-10-08; decisions log 2026-10-08 and 2026-10-19).",
+      "asOf": "2026-10-19",
+      "seats": [
+        {
+          "id": "visionary",
+          "parentId": null,
+          "title": "Visionary",
+          "person": "Jude Heath",
+          "roles": [
+            "Major business relationships",
+            "Big picture vision and ideas",
+            "R&D and innovation",
+            "Creative problem solving",
+            "Key client relationships"
+          ],
+          "notes": "Top of chart. The 10/29-30 management session did not revisit this seat."
+        },
+        {
+          "id": "integrator",
+          "parentId": "visionary",
+          "title": "Integrator",
+          "person": "Jennifer Heath",
+          "roles": [
+            "Lead, manage, accountability",
+            "Execute on the business plan",
+            "Harmonize major functions",
+            "Resolve cross-functional issues",
+            "Priority management"
+          ],
+          "notes": "Export shows \"Jennifer Louise\"; same person, recorded as Jennifer Heath (decisions log 2026-10-07). Sixth role over the five-role cap, moved here: Communication across the organization."
+        },
+        {
+          "id": "sales-and-marketing",
+          "parentId": "integrator",
+          "title": "Sales and Marketing",
+          "person": "Russell Heath; Jude Heath",
+          "roles": [
+            "Lead generation and marketing strategy",
+            "Business development",
+            "Social media management (with Ashley)",
+            "Client acquisition",
+            "Brand management"
+          ],
+          "notes": "Shared seat, two names (issues-list V6). Two further roles over the five-role cap: HR / Employee management; Hiring and performance reviews. HR placement flagged V8 (the book places HR in Finance and Administration)."
+        },
+        {
+          "id": "social-media-marketing",
+          "parentId": "sales-and-marketing",
+          "title": "Social Media Marketing",
+          "person": "Ashely Cabeceiras",
+          "roles": [],
+          "notes": "No roles listed (empty box in the EOS One export). Name spelled \"Ashely\" on the export; \"Ashley\" in the Sales and Marketing roles and the 2026 People Analyzer; spelling unconfirmed."
+        },
+        {
+          "id": "operations",
+          "parentId": "integrator",
+          "title": "Operations",
+          "person": "Jennifer Heath",
+          "roles": [
+            "Lead, manage, accountability",
+            "Tax return preparation, review, and delivery",
+            "Process management and quality control",
+            "Client service and retention",
+            "Training and process implementation"
+          ],
+          "notes": "Sixth role over the five-role cap: Project and software implementation. The Integrator also heads this major function and co-holds Finance/Administration (concentration flagged in the living record)."
+        },
+        {
+          "id": "jennifers-tax-team",
+          "parentId": "operations",
+          "title": "Jennifer's Tax Team",
+          "person": "Jennifer Heath",
+          "roles": [],
+          "notes": "No roles listed. Seat named for the person who holds it (issues-list V9; the book builds structure first, names last)."
+        },
+        {
+          "id": "judes-tax-team",
+          "parentId": "operations",
+          "title": "Jude's Tax Team",
+          "person": "Jude Heath",
+          "roles": [],
+          "notes": "No roles listed. Seat named for the person who holds it (V9). Puts the Visionary below the Integrator in a second seat."
+        },
+        {
+          "id": "sr-tax-accountant",
+          "parentId": "jennifers-tax-team",
+          "title": "Sr. Tax Accountant",
+          "person": "Nicole Mano",
+          "roles": [
+            "Lead, manage, accountability",
+            "Tax return preparation and review",
+            "Staff training",
+            "Quality control"
+          ],
+          "notes": "Per the decisions log (2026-10-08) Nicole's work is now mostly review; Xixi Ma is the other, more senior accountant and holds no seat (roster mismatch, V10)."
+        },
+        {
+          "id": "prep-admin",
+          "parentId": "sr-tax-accountant",
+          "title": "Prep/Admin",
+          "person": "Kayla Virgil",
+          "roles": [
+            "Tax preparation",
+            "Administrative support",
+            "Scanning and document prep",
+            "Saving and organizing files"
+          ],
+          "notes": "The chart shows only this and the Admin seat for Kayla; her real work (Office Manager, workflows coordinator, director of client communication and client success) is not on the chart (decisions log 2026-10-08)."
+        },
+        {
+          "id": "admin-under-sr-tax-accountant",
+          "parentId": "sr-tax-accountant",
+          "title": "Admin (under Sr. Tax Accountant)",
+          "person": "Debra Mengel",
+          "roles": [
+            "Scanning and document prep",
+            "Saving and organizing files",
+            "Mailing and correspondence"
+          ],
+          "notes": "Jennifer's side. Distinct from the Admin seat under Tax Preparer."
+        },
+        {
+          "id": "lead-preparer",
+          "parentId": "judes-tax-team",
+          "title": "Lead Preparer",
+          "person": "Morgan Assavedo",
+          "roles": [
+            "Tax preparation (Jude's clients)",
+            "Bookkeeping and payroll",
+            "Estimates and planning",
+            "Informal staff mentoring"
+          ],
+          "notes": "The 10/29-30 session removes the \"lead\" wording (D1-3) and replaces this construct with Xixi as senior on Jude's team (D1-2)."
+        },
+        {
+          "id": "tax-preparer",
+          "parentId": "lead-preparer",
+          "title": "Tax Preparer",
+          "person": "Alexis Landry; Ann Mary Jose",
+          "roles": [
+            "Tax preparation (learning)",
+            "Focus on tax experience"
+          ],
+          "notes": "Shared seat, two names (V6). Fewer than five roles (issues-list / session issue I2-20)."
+        },
+        {
+          "id": "admin-under-tax-preparer",
+          "parentId": "tax-preparer",
+          "title": "Admin (under Tax Preparer)",
+          "person": "Alexis Landry; Sieara Williams; Ashely Cabeceiras; Kayla Virgil",
+          "roles": [
+            "Administrative support",
+            "Document management",
+            "Bookkeeping",
+            "Payroll"
+          ],
+          "notes": "Four names, one seat (V6). Alexis Landry sits in a seat that reports to a seat Alexis also holds; Kayla Virgil is on both tax teams; Ashely Cabeceiras holds seats under three different major functions."
+        },
+        {
+          "id": "finance-administration",
+          "parentId": "integrator",
+          "title": "Finance/Administration",
+          "person": "Russell Heath; Jennifer Heath",
+          "roles": [
+            "Forecasting and budgets",
+            "Accounting and reporting",
+            "Payroll and employee benefits",
+            "Building maintenance",
+            "Administrative support coordination"
+          ],
+          "notes": "Export shows Alex Caluda; Jennifer Louise. Alex Caluda left 2026-10-08; Russell Heath absorbed the seat and Jennifer Heath still shares it (shared seat, V6; decisions log 2026-10-08 and 2026-10-19)."
+        },
+        {
+          "id": "front-desk-support",
+          "parentId": "finance-administration",
+          "title": "Front Desk / Support",
+          "person": "Ashely Cabeceiras",
+          "roles": [
+            "Reception",
+            "Social media management",
+            "Admin assistant",
+            "General support"
+          ],
+          "notes": "The 10/29-30 session kept this seat and added Inventory as a fifth role; ownership claim (\"that part is mine\", speaker unresolved) left open."
+        }
+      ]
+    },
+    {
+      "key": "proposal",
+      "name": "J. Heath & Co. Accountability Chart (proposal)",
+      "status": "proposal",
+      "source": "company/traction/Annual/Management/2026-10-29-management-session-report.md (sections 3.8, 4.6 and 10; decisions D1-1 through D1-5, D2-22 through D2-28) and 2026-10-29-management-session-summary-management.md section 5. All structure is PROPOSAL to leadership until the leadership quarterly (week of 2026-11-02). The session redrew only the layer under Operations and Front Desk/Support; Visionary, Integrator, Sales and Marketing and Finance/Administration are carried unchanged from the current chart.",
+      "asOf": "2026-10-30",
+      "seats": [
+        {
+          "id": "visionary",
+          "parentId": null,
+          "title": "Visionary",
+          "person": "Jude Heath",
+          "roles": [
+            "Major business relationships",
+            "Big picture vision and ideas",
+            "R&D and innovation",
+            "Creative problem solving",
+            "Key client relationships"
+          ],
+          "notes": "Not revisited by the session; roles carried from the current chart. Jude's and Jennifer's own seat roles are an open item for leadership (\"they can do that themselves\", Day 2)."
+        },
+        {
+          "id": "integrator",
+          "parentId": "visionary",
+          "title": "Integrator",
+          "person": "Jennifer Heath",
+          "roles": [
+            "Lead, manage, accountability",
+            "Execute on the business plan",
+            "Harmonize major functions",
+            "Resolve cross-functional issues",
+            "Priority management"
+          ],
+          "notes": "Not revisited by the session; carried from the current chart. Sixth role over the five-role cap, in the source: Communication across the organization."
+        },
+        {
+          "id": "sales-and-marketing",
+          "parentId": "integrator",
+          "title": "Sales and Marketing",
+          "person": "Russell Heath; Jude Heath",
+          "roles": [
+            "Lead generation and marketing strategy",
+            "Business development",
+            "Social media management (with Ashley)",
+            "Client acquisition",
+            "Brand management"
+          ],
+          "notes": "Carried unchanged; still a shared seat (V6 open). Two further roles in the source: HR / Employee management; Hiring and performance reviews."
+        },
+        {
+          "id": "finance-administration",
+          "parentId": "integrator",
+          "title": "Finance/Administration",
+          "person": "Russell Heath; Jennifer Heath",
+          "roles": [
+            "Forecasting and budgets",
+            "Accounting and reporting",
+            "Payroll and employee benefits",
+            "Building maintenance",
+            "Administrative support coordination"
+          ],
+          "notes": "Carried unchanged; still shared by Russell and Jennifer (decisions log 2026-10-19). The session did not revisit it."
+        },
+        {
+          "id": "front-desk-support",
+          "parentId": "finance-administration",
+          "title": "Front Desk / Support",
+          "person": "Ashley Cabeceiras",
+          "roles": [
+            "Reception",
+            "Social media management",
+            "Admin assistant",
+            "General support",
+            "Inventory"
+          ],
+          "notes": "Kept, with Inventory added as the fifth role (Day 1). Ownership claim (\"that part is mine\", speaker unresolved) open for leadership. Ashley also becomes the admin communication intermediary: daily unanswered-messages report and weekly missing-info list routed through Xixi (D2-13). Name spelled Ashley in the session sources, Ashely on the EOS One export."
+        },
+        {
+          "id": "operations",
+          "parentId": "integrator",
+          "title": "Operations",
+          "person": null,
+          "roles": [],
+          "notes": "Head left open (\"that's a later on decision\"): Jennifer Heath (current head) versus Russell Heath. Role list not redrawn; five current Operations roles (client service and retention, training, process implementation, project and software implementation, process management) move to Kayla's seat (D1-1). The four divisions and Kayla's seat sit below this seat; the Day 2 tree was drawn cut off above Operations."
+        },
+        {
+          "id": "kayla-seat",
+          "parentId": "operations",
+          "title": "Kayla's seat (above the team split)",
+          "person": "Kayla Virgil",
+          "roles": [
+            "Client service and retention",
+            "Training",
+            "Process implementation",
+            "Project and software implementation",
+            "Process management"
+          ],
+          "notes": "New seat, \"in the middle\", above the team split (D1-1); the session gave it no functional name. The tax-return line is removed from this seat (tax-return accountability moves to Jude and Jennifer as team owners). Kayla also oversees the seniors and their WIP/billable monitoring (D2-28) and drops from five WIP meetings to about three."
+        },
+        {
+          "id": "tax-jude",
+          "parentId": "kayla-seat",
+          "title": "Tax-Jude",
+          "person": "Xixi Ma",
+          "roles": [
+            "Technical research",
+            "Business writing",
+            "Supervising, delegating and monitoring",
+            "Owning the engagement",
+            "Individual marketing plan and business contacts"
+          ],
+          "notes": "Xixi's first seat (D1-2): \"Senior Tax Accountant and Senior Tax Reviewer\" on Jude's team, replacing the \"lead preparer = Morgan\" construct (informal staff mentoring moves to Tax Staff 2). One standardized senior role shared with Nicole (D2-23, D2-27). Division per D2-24."
+        },
+        {
+          "id": "tax-jen",
+          "parentId": "kayla-seat",
+          "title": "Tax-Jen",
+          "person": "Nicole Mano",
+          "roles": [
+            "Technical research",
+            "Business writing",
+            "Supervising, delegating and monitoring",
+            "Owning the engagement",
+            "Individual marketing plan and business contacts"
+          ],
+          "notes": "Senior under Tax-Jen (D2-24); placement inferred, the transcript garbles the tree line. Nicole flips from about 168 prepared / 25 reviewed to about 140 reviewed plus preparing the 40-50 LOG returns, with Alexis and Sierra tag-teaming the logs; she keeps her complicated clients (D2-22)."
+        },
+        {
+          "id": "accounting-jude",
+          "parentId": "operations",
+          "title": "Accounting-Jude",
+          "person": "Ann Mary Jose",
+          "roles": [
+            "Review the accounting work",
+            "Interact closely with seniors and supervisors",
+            "Route unresolved questions up"
+          ],
+          "notes": "Accounting lead: Mary in both accounting divisions (D2-24). Reviews all monthly accounting for both sides; printed P&L details go to Jude's desk for his yearly look (D2-26). \"Mary\" / \"Anne-Mary\" in the session transcript = Ann Mary Jose."
+        },
+        {
+          "id": "accounting-jen",
+          "parentId": "operations",
+          "title": "Accounting-Jen",
+          "person": "Ann Mary Jose",
+          "roles": [
+            "Review the accounting work",
+            "Interact closely with seniors and supervisors",
+            "Route unresolved questions up"
+          ],
+          "notes": "Same lead and role list as Accounting-Jude (D2-24, D2-25). Escalation from the accounting lead goes straight to Jude and Jennifer, not through Kayla (D2-26)."
+        },
+        {
+          "id": "tax-staff-1",
+          "parentId": "kayla-seat",
+          "title": "Tax Staff 1",
+          "person": "Sierra Williams; Alexis Landry",
+          "roles": [
+            "Learn basis",
+            "Learn income and business tax",
+            "Learn payroll tax",
+            "Be proactive in finding work",
+            "Ask questions and don't spin your wheels"
+          ],
+          "notes": "Pooled across Tax-Jude and Tax-Jen (D2-24); drawn in a \"V\" converging on the preparers, so this seed attaches it under Kayla's seat above the split (single-parent tree). Questions route staff 1 -> staff 2 -> senior -> Jude/Jennifer only if needed (D2-26). \"Sierra\" in the transcript = Sieara Williams."
+        },
+        {
+          "id": "tax-staff-2",
+          "parentId": "kayla-seat",
+          "title": "Tax Staff 2",
+          "person": "Morgan Assavedo; Ann Mary Jose",
+          "roles": [
+            "Prepare basic and more complex returns",
+            "Support peers and less experienced staff",
+            "More interaction with seniors",
+            "Ask questions and don't spin your wheels",
+            "Be proactive in finding work"
+          ],
+          "notes": "\"Learn\" dropped for this level (D2-25); \"lead\" dropped from all seat names (D1-3). The old Tax Preparer short list is replaced by this lead-preparer list given to all four staff (D2-25, solves I2-20). Informal staff mentoring sits here (Morgan, Mary)."
+        },
+        {
+          "id": "accountant-1",
+          "parentId": "accounting-jude",
+          "title": "Accountant 1",
+          "person": "Sierra Williams; Alexis Landry",
+          "roles": [
+            "Develop proficiency in QuickBooks Desktop/Online/Xero and the Lacerte equivalent",
+            "Learn payroll",
+            "Learn P&L, balance sheets and reconciliations",
+            "Be proactive in finding work",
+            "Ask questions and don't spin your wheels"
+          ],
+          "notes": "Drawn spanning both accounting divisions (D2-24); this seed attaches it under Accounting-Jude because Jude's side has the larger accounting book, but the attachment is an editorial call the builder should mark. Questions route to the accounting lead (Mary), then Jude and Jennifer (D2-26)."
+        },
+        {
+          "id": "post-processing-admin",
+          "parentId": "tax-jen",
+          "title": "Post-Processing Admin",
+          "person": "Debra Mengel",
+          "roles": [],
+          "notes": "D1-5: Debbie is post-processing admin on Jennifer's side (clean-up after all returns are done, invoices, payment processing) and purely the mailer on Jude's side. Layer order: \"Jude and Jennifer, then Nicole and Shishi, then everybody else.\" No role bullets were written for this seat; the session used \"Debbie\" for Debra Mengel."
+        }
+      ]
+    }
+  ]
+}

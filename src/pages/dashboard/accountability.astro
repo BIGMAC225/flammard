@@ -1,0 +1,78 @@
+---
+import Dashboard from '../../layouts/Dashboard.astro';
+import AccountabilityChart from '../../components/AccountabilityChart';
+import { can } from '../../lib/permissions';
+import { many, sql } from '../../lib/db';
+import type { ChartRow, SeatPersonRow, SeatRow } from '../../lib/accountability';
+
+// One firm-wide chart, current by default; ?version=proposal shows the newest
+// proposal, ?version=<chart id> a specific one (the switcher's proposal list).
+const charts = await many<ChartRow>(
+  sql()`select * from accountability_charts order by created_at desc`
+);
+const current = charts.find((c) => c.status === 'current') ?? null;
+const proposals = charts.filter((c) => c.status === 'proposal');
+const param = Astro.url.searchParams.get('version') ?? 'current';
+const byId = charts.find((c) => c.id === param);
+const chart = byId ?? (param === 'proposal' ? proposals[0] ?? null : current);
+const viewingProposal = chart?.status === 'proposal';
+
+let seats: Array<SeatRow & { people: SeatPersonRow[] }> = [];
+if (chart) {
+  const rows = await many<SeatRow>(
+    sql()`select * from accountability_seats where chart_id = ${chart.id} order by sort_order, created_at`
+  );
+  const people = await many<SeatPersonRow>(sql()`
+    select * from accountability_seat_people
+    where seat_id in (select id from accountability_seats where chart_id = ${chart.id})
+    order by sort_order, created_at
+  `);
+  const bySeat = new Map<string, SeatPersonRow[]>();
+  for (const person of people) {
+    const list = bySeat.get(person.seat_id) ?? [];
+    list.push(person);
+    bySeat.set(person.seat_id, list);
+  }
+  seats = rows.map((s) => ({ ...s, people: bySeat.get(s.id) ?? [] }));
+}
+
+const canPromote = can(Astro.locals.principal, 'structure.manage');
+---
+
+<Dashboard
+  eyebrow="EOS"
+  title="Accountability"
+  description="One firm-wide seat chart: who is accountable for what. Drag a card onto another to re-parent it."
+>
+  <!-- Current / Proposal switch -->
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+    <div class="inline-flex rounded-xl border border-line p-1 bg-bg-elevated" role="tablist" aria-label="Chart version">
+      <a href="?version=current" role="tab" aria-selected={!viewingProposal} class={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${!viewingProposal ? 'bg-bg-base text-ink-primary shadow-sm' : 'text-ink-muted hover:text-ink-primary'}`}>Current</a>
+      <a href="?version=proposal" role="tab" aria-selected={viewingProposal} class={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${viewingProposal ? 'bg-bg-base text-ink-primary shadow-sm' : 'text-ink-muted hover:text-ink-primary'}`}>Proposal</a>
+    </div>
+    {proposals.length > 1 && (
+      <div class="flex flex-wrap items-center gap-1.5 text-xs">
+        <span class="text-ink-muted">Proposals:</span>
+        {proposals.map((p) => (
+          <a
+            href={`?version=${p.id}`}
+            class={`px-2.5 py-1 rounded-full border transition-colors ${chart?.id === p.id ? 'border-accent text-accent bg-accent-muted' : 'border-line text-ink-secondary hover:text-ink-primary'}`}
+          >
+            {p.title}
+          </a>
+        ))}
+      </div>
+    )}
+  </div>
+
+  {chart ? (
+    <AccountabilityChart chart={chart} seats={seats} canPromote={canPromote} client:load />
+  ) : (
+    <div class="card text-center py-12">
+      <p class="text-sm text-ink-secondary mb-2">No chart here yet.</p>
+      <p class="text-xs text-ink-muted">
+        Load the seed with scripts/accountability-seed.mjs, or create a proposal chart through POST /api/accountability.
+      </p>
+    </div>
+  )}
+</Dashboard>

@@ -125,6 +125,8 @@ const RULES: Array<{ method: Method; test: (path: string) => boolean; need: Need
       p.startsWith('/api/roadmap/'),
     need: 'structure.manage',
   },
+  // Promoting an accountability chart replaces the current org structure
+  { method: 'non-GET', test: (p) => p === '/api/accountability/promote', need: 'structure.manage' },
   { method: 'GET', test: (p) => p === '/api/team', need: 'app.view' },
   { method: 'non-GET', test: (p) => p.startsWith('/api/'), need: 'items.edit' },
   { method: 'GET', test: (p) => p.startsWith('/api/'), need: 'app.view' },
