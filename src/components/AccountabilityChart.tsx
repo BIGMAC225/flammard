@@ -33,21 +33,24 @@ import {
   type LayoutEdge,
   type LayoutNode,
   type LayoutPositions,
+  type SeatLink,
   type SeatPersonRow,
   type SeatRow,
 } from '../lib/accountability';
 
 // The Accountability Chart island: one chart's seats on a React Flow canvas.
-// The seats array is the source of truth; nodes and edges are derived from it
-// and recomputed after every change (dagre, top to bottom; no stored x/y).
-// Saves are optimistic with rollback on error (the RocksPanel pattern) so the
-// viewport survives edits.
+// The seats array plus the extra-parent links are the source of truth; nodes
+// and edges are derived from them and recomputed after every change (dagre,
+// top to bottom; no stored x/y). Saves are optimistic with rollback on error
+// (the RocksPanel pattern) so the viewport survives edits.
 
 export type SeatWithPeople = SeatRow & { people: SeatPersonRow[] };
 
 interface AccountabilityChartProps {
   chart: ChartRow;
   seats: SeatWithPeople[];
+  /** Extra reporting lines (accountability_seat_links rows) for this chart. */
+  links: SeatLink[];
   /** Whether this principal may promote a proposal; the server re-checks. */
   canPromote?: boolean;
 }
@@ -57,6 +60,9 @@ interface AccountabilityChartProps {
 // card were this tall and ranks never overlap.
 const LAYOUT_NODE_HEIGHT = 200;
 const EDGE_STROKE = '#94a3b8';
+// Extra-parent connectors are lighter than the primary line so the tree stays
+// the obvious structure (the Visionary → Integrator dash is kept for primary).
+const EXTRA_EDGE_STROKE = '#cbd5e1';
 
 /** The layout function buildLayout calls: dagre, top to bottom. */
 function dagreLayout(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutPositions {
@@ -196,11 +202,12 @@ const nodeTypes = { seat: SeatNode };
 
 function seatsToNodes(
   seats: SeatWithPeople[],
+  links: SeatLink[],
   editingId: string | null,
   onEdit: (id: string) => void,
   onDelete: (id: string) => void
 ): SeatFlowNode[] {
-  const positions = buildLayout(seats, dagreLayout);
+  const positions = buildLayout(seats, dagreLayout, links);
   return seats.map((seat) => ({
     id: seat.id,
     type: 'seat' as const,
@@ -226,8 +233,9 @@ export default function AccountabilityChart(props: AccountabilityChartProps) {
   );
 }
 
-function Chart({ chart, seats: initialSeats, canPromote = false }: AccountabilityChartProps) {
+function Chart({ chart, seats: initialSeats, links: initialLinks, canPromote = false }: AccountabilityChartProps) {
   const [seats, setSeats] = useState<SeatWithPeople[]>(initialSeats);
+  const [links, setLinks] = useState<SeatLink[]>(initialLinks);
   const [nodes, setNodes, onNodesChange] = useNodesState<SeatFlowNode>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -285,14 +293,25 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
       count > 0 ? `"${seat.title}" and the ${count} seat${count === 1 ? '' : 's'} below it` : `"${seat.title}"`;
     if (!window.confirm(`Delete ${label}?`)) return;
     const prev = seats;
+    const prevLinks = links;
     setSeats(seats.filter((s) => !below.has(s.id)));
+    setLinks(links.filter((l) => !below.has(l.seat_id) && !below.has(l.parent_id)));
     if (editingId && below.has(editingId)) closeForm();
     void (async () => {
       const res = await fetch(`/api/accountability/seats/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         setSeats(prev);
+        setLinks(prevLinks);
         setError('Could not delete the seat');
+        return;
       }
+      // The server promotes children with a surviving extra parent instead of
+      // deleting them; re-read the chart for the authoritative seats and links.
+      const fresh = await fetch(`/api/accountability?status=${chart.status}`);
+      if (!fresh.ok) return;
+      const payload = await fresh.json();
+      setSeats(payload.seats);
+      setLinks(payload.links ?? []);
     })();
   };
 
@@ -303,14 +322,18 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
     const check = validateReparent(
       seats.map((s) => ({ id: s.id, parent_id: s.parent_id })),
       id,
-      parentId
+      parentId,
+      links
     );
     if ('error' in check) {
       setError(check.error);
       return false;
     }
     const prev = seats;
+    const prevLinks = links;
     setSeats(seats.map((s) => (s.id === id ? { ...s, parent_id: parentId } : s)));
+    // The new primary parent stops being an extra parent (the server agrees).
+    setLinks(links.filter((l) => !(l.seat_id === id && l.parent_id === parentId)));
     setError('');
     void (async () => {
       const res = await fetch(`/api/accountability/seats/${id}`, {
@@ -320,6 +343,7 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
       });
       if (!res.ok) {
         setSeats(prev);
+        setLinks(prevLinks);
         const payload = await res.json().catch(() => ({}));
         setError(payload.error ?? 'Could not move the seat');
       }
@@ -327,31 +351,60 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
     return true;
   };
 
-  // Nodes and edges follow the seats: layout recomputes after every change.
-  // fitView runs on the first layout only, so later changes keep the viewport.
+  /** Toggles one "Also reports to" extra parent: the full set goes back as
+   *  PATCH extra_parent_ids (optimistic, rolled back on error). */
+  const toggleExtraParent = (seatId: string, parentId: string) => {
+    const current = links.filter((l) => l.seat_id === seatId).map((l) => l.parent_id);
+    const next = current.includes(parentId)
+      ? current.filter((p) => p !== parentId)
+      : [...current, parentId];
+    const prev = links;
+    setLinks(
+      current.includes(parentId)
+        ? links.filter((l) => !(l.seat_id === seatId && l.parent_id === parentId))
+        : [...links, { seat_id: seatId, parent_id: parentId }]
+    );
+    setError('');
+    void (async () => {
+      const res = await fetch(`/api/accountability/seats/${seatId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extra_parent_ids: next }),
+      });
+      if (!res.ok) {
+        setLinks(prev);
+        const payload = await res.json().catch(() => ({}));
+        setError(payload.error ?? 'Could not save the extra parent');
+      }
+    })();
+  };
+
+  // Nodes and edges follow the seats and links: layout recomputes after every
+  // change. fitView runs on the first layout only, so later changes keep the
+  // viewport.
   useEffect(() => {
-    setNodes(seatsToNodes(seats, editingId, startEdit, deleteSeat));
+    setNodes(seatsToNodes(seats, links, editingId, startEdit, deleteSeat));
     if (didFit.current) return;
     didFit.current = true;
     const frame = window.requestAnimationFrame(() => rf.fitView({ padding: 0.12, duration: 200 }));
     return () => window.cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seats, editingId]);
+  }, [seats, links, editingId]);
 
   const edges = useMemo<Edge[]>(
     () =>
-      edgesFromSeats(seats).map((e) => ({
+      edgesFromSeats(seats, links).map((e) => ({
         id: e.id,
         source: e.source,
         target: e.target,
         type: 'smoothstep',
         style: {
-          stroke: EDGE_STROKE,
+          stroke: e.extra ? EXTRA_EDGE_STROKE : EDGE_STROKE,
           strokeWidth: 1.5,
           ...(e.dashed ? { strokeDasharray: '8 5' } : {}),
         },
       })),
-    [seats]
+    [seats, links]
   );
 
   /** The drag pointer in flow coordinates, or null when a touch has no active point. */
@@ -386,17 +439,17 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
   const onNodeDrag = (event: MouseEvent | TouchEvent, dragged: SeatFlowNode) => {
     const pointer = pointerToFlow(event);
     if (!pointer) return;
-    setDropTarget(pickDropTarget(seats, dragged.id, pointer, dropRects()));
+    setDropTarget(pickDropTarget(seats, dragged.id, pointer, dropRects(), links));
   };
 
   /** Drop on a highlighted card = re-parent; drop anywhere else = snap back to
    *  the layout position, no request. */
   const onNodeDragStop = (event: MouseEvent | TouchEvent, dragged: SeatFlowNode) => {
     const pointer = pointerToFlow(event);
-    const targetId = pointer ? pickDropTarget(seats, dragged.id, pointer, dropRects()) : null;
+    const targetId = pointer ? pickDropTarget(seats, dragged.id, pointer, dropRects(), links) : null;
     setDropTarget(null);
     const moved = targetId ? reparent(dragged.id, targetId) : false;
-    if (!moved) setNodes(seatsToNodes(seats, editingId, startEdit, deleteSeat));
+    if (!moved) setNodes(seatsToNodes(seats, links, editingId, startEdit, deleteSeat));
   };
 
   const saveForm = async () => {
@@ -515,12 +568,13 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
   const formOpen = adding || editingId !== null;
 
   // The edit form's Reports-to picker: every seat except the seat itself and
-  // its descendants (what allowedParentIds leaves); changes re-parent through
-  // the same reparent PATCH as a drag.
+  // its descendants (what allowedParentIds leaves, links included); changes
+  // re-parent through the same reparent PATCH as a drag. "Also reports to"
+  // offers the same set minus the primary parent, saved as extra_parent_ids.
   const editSeat = editingId ? seats.find((s) => s.id === editingId) : undefined;
   const allowedParents = useMemo(
-    () => (editSeat ? new Set(allowedParentIds(seats, editSeat.id)) : null),
-    [seats, editSeat]
+    () => (editSeat ? new Set(allowedParentIds(seats, editSeat.id, links)) : null),
+    [seats, links, editSeat]
   );
 
   return (
@@ -595,6 +649,31 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
                 ))}
             </select>
           )}
+          {editSeat && allowedParents && (
+            <div>
+              <p className="text-xs font-medium text-ink-secondary">Also reports to</p>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                {seatOptions(seats)
+                  .filter((o) => allowedParents.has(o.id) && o.id !== editSeat.parent_id)
+                  .map((o) => (
+                    <label
+                      key={o.id}
+                      className="flex items-center gap-1.5 text-sm text-ink-secondary"
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-accent"
+                        checked={links.some(
+                          (l) => l.seat_id === editSeat.id && l.parent_id === o.id
+                        )}
+                        onChange={() => toggleExtraParent(editSeat.id, o.id)}
+                      />
+                      {o.label}
+                    </label>
+                  ))}
+              </div>
+            </div>
+          )}
           {adding && seats.length > 0 && (
             <select
               className="input text-sm"
@@ -661,8 +740,9 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
       </div>
       <p className="mt-2 text-xs text-ink-muted">
         Drag a card and drop it with the pointer over another card (it highlights) to re-parent it, or use
-        "Reports to" in the edit form. The Visionary to Integrator connector is dotted; a "shared" tag marks
-        a seat that needs to come back to one name.
+        "Reports to" in the edit form. The Visionary to Integrator connector is dotted; lighter connectors
+        are extra reporting lines ("Also reports to" in the edit form); a "shared" tag marks a seat that
+        needs to come back to one name.
       </p>
     </div>
   );

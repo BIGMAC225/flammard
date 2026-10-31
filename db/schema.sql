@@ -956,7 +956,8 @@ on conflict do nothing;
 -- ── Accountability chart (2026-10-31) ─────────────────────────────────────
 -- Also shipped as db/upgrades/2026-10-31-accountability.sql. Firm-wide EOS
 -- accountability chart: exactly one current version, any number of proposals;
--- seats form a strict tree (one parent, one root per chart). People on a seat
+-- seats form a strict tree (one primary parent, one root per chart; extra
+-- parents live in accountability_seat_links below). People on a seat
 -- live in accountability_seat_people with the dual id-plus-text convention
 -- (person_id nullable, person text kept equal to people.name by the app), so
 -- a seat can be open, held or shared.
@@ -1001,3 +1002,22 @@ create table if not exists accountability_seat_people (
   updated_at  timestamptz not null default now()
 );
 create index if not exists accountability_seat_people_seat_idx on accountability_seat_people(seat_id);
+
+-- ── Accountability extra-parent links (2026-10-31) ─────────────────────────
+-- Also shipped as db/upgrades/2026-10-31-accountability-links.sql. A seat
+-- keeps exactly one primary parent (parent_id above, the tree stays, one root
+-- per chart) and may report to any number of extra parents here — the
+-- pooled-staff case (Tax Staff 1 under both Tax-Jude and Tax-Jen). Cycles are
+-- prevented in the app (validateReparent walks primary and extra edges), not
+-- in SQL.
+
+create table if not exists accountability_seat_links (
+  id          uuid primary key default gen_random_uuid(),
+  seat_id     uuid not null references accountability_seats(id) on delete cascade,
+  parent_id   uuid not null references accountability_seats(id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  unique (seat_id, parent_id),
+  check (seat_id <> parent_id)
+);
+create index if not exists accountability_seat_links_seat_idx on accountability_seat_links(seat_id);
+create index if not exists accountability_seat_links_parent_idx on accountability_seat_links(parent_id);

@@ -14,6 +14,7 @@ import {
   normalizePeople,
   pickDropTarget,
   sanitizeRoles,
+  survivingExtraParent,
   validateReparent,
 } from '../src/lib/accountability.ts';
 
@@ -217,9 +218,9 @@ test('edgesFromSeats: visionary to integrator dashed, the rest solid, all smooth
     { id: 'f', parent_id: 'v', title: 'Finance/Administration' },
   ];
   assert.deepEqual(edgesFromSeats(seats), [
-    { id: 'v-i', source: 'v', target: 'i', type: 'smoothstep', dashed: true },
-    { id: 'i-o', source: 'i', target: 'o', type: 'smoothstep', dashed: false },
-    { id: 'v-f', source: 'v', target: 'f', type: 'smoothstep', dashed: false },
+    { id: 'v-i', source: 'v', target: 'i', type: 'smoothstep', dashed: true, extra: false },
+    { id: 'i-o', source: 'i', target: 'o', type: 'smoothstep', dashed: false, extra: false },
+    { id: 'v-f', source: 'v', target: 'f', type: 'smoothstep', dashed: false, extra: false },
   ]);
 });
 
@@ -232,4 +233,88 @@ test('edgesFromSeats matches titles after trimming and case, and skips dangling 
   const edges = edgesFromSeats(seats);
   assert.equal(edges.length, 1);
   assert.equal(edges[0].dashed, true);
+});
+
+// ── extra-parent links (accountability_seat_links) ──────────────────────────
+// tax-team as an extra parent of operations: pooled staff under two seats.
+
+const LINKS = [{ seat_id: 'operations', parent_id: 'tax-team' }];
+
+test('descendantIds follows extra-parent links as well as the primary tree', () => {
+  assert.deepEqual([...descendantIds(TREE, 'tax-team', LINKS)].sort(), ['operations', 'tax-team']);
+  // Without the link, the primary tree only
+  assert.deepEqual([...descendantIds(TREE, 'tax-team')], ['tax-team']);
+});
+
+test('allowedParentIds bans a seat reached through a link', () => {
+  assert.deepEqual(allowedParentIds(TREE, 'tax-team', LINKS), ['visionary', 'integrator']);
+  assert.deepEqual(allowedParentIds(TREE, 'tax-team'), ['visionary', 'integrator', 'operations']);
+});
+
+test('validateReparent rejects a cycle that only exists through a link', () => {
+  const r = validateReparent(TREE, 'tax-team', 'operations', LINKS);
+  assert.ok('error' in r && typeof r.error === 'string');
+  // the same move without the link is fine
+  assert.deepEqual(validateReparent(TREE, 'tax-team', 'operations'), { ok: true });
+});
+
+test('pickDropTarget never offers a seat reached only through a link', () => {
+  // Pointer over operations while dragging tax-team: operations is tax-team's
+  // extra child, so it can never become tax-team's primary parent.
+  assert.equal(pickDropTarget(TREE, 'tax-team', { x: -160, y: 560 }, DRAG_RECTS, LINKS), null);
+});
+
+test('buildLayout feeds the layout both edge sets, deduped, in a stable order', () => {
+  const calls = [];
+  buildLayout(LAYOUT_SEATS, (_nodes, edges) => {
+    calls.push(edges);
+    return {};
+  }, [{ seat_id: 'ops', parent_id: 'visionary' }]);
+  assert.deepEqual(calls[0], [
+    { source: 'visionary', target: 'integrator' },
+    { source: 'integrator', target: 'ops' },
+    { source: 'visionary', target: 'ops' },
+  ]);
+  // a link that duplicates a primary edge is dropped, not drawn twice
+  buildLayout(LAYOUT_SEATS, (_nodes, edges) => {
+    calls.push(edges);
+    return {};
+  }, [{ seat_id: 'integrator', parent_id: 'visionary' }]);
+  assert.equal(
+    calls[1].filter((e) => e.source === 'visionary' && e.target === 'integrator').length,
+    1
+  );
+});
+
+test('edgesFromSeats marks extra-parent connectors and gives them their own ids', () => {
+  const seats = [
+    { id: 'v', parent_id: null, title: 'Visionary' },
+    { id: 'a', parent_id: 'v', title: 'Division A' },
+    { id: 'b', parent_id: 'v', title: 'Division B' },
+    { id: 's', parent_id: 'a', title: 'Tax Staff 1' },
+  ];
+  const edges = edgesFromSeats(seats, [{ seat_id: 's', parent_id: 'b' }]);
+  assert.deepEqual(edges.find((e) => e.extra), {
+    id: 'link-b-s',
+    source: 'b',
+    target: 's',
+    type: 'smoothstep',
+    dashed: false,
+    extra: true,
+  });
+  assert.equal(edges.filter((e) => !e.extra).length, 3);
+});
+
+test('survivingExtraParent picks the earliest link whose parent outlives the delete', () => {
+  const links = [
+    { seat_id: 'staff', parent_id: 'tax-jude' },
+    { seat_id: 'staff', parent_id: 'kayla' },
+    { seat_id: 'other', parent_id: 'tax-jude' },
+  ]; // ordered by created_at
+  // every extra parent dies with the delete: the child goes with the subtree
+  assert.equal(survivingExtraParent(links, 'staff', new Set(['kayla', 'tax-jude'])), null);
+  // the first link's parent is doomed, the second survives: skip to it
+  assert.equal(survivingExtraParent(links, 'staff', new Set(['tax-jude'])), 'kayla');
+  assert.equal(survivingExtraParent(links, 'staff', new Set(['kayla'])), 'tax-jude');
+  assert.equal(survivingExtraParent(links, 'nobody', new Set()), null);
 });

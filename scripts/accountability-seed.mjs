@@ -3,23 +3,40 @@
 //   NETLIFY_DATABASE_URL=postgres://... node scripts/accountability-seed.mjs db/seeds/accountability-chart-2026-10-31.json
 //
 // Every chart in the file lands in accountability_charts, accountability_seats
-// (parents inserted before children) and accountability_seat_people, in one
-// transaction. A seat's "person" string joined by ";" is several people; each
-// name is matched against active people's names and aliases case-insensitively
-// to set person_id (and store the canonical name), and kept as written text
-// when nothing matches. Refuses when a chart with the same title and status
-// already exists, unless --replace deletes and reloads that chart.
+// (parents inserted before children), accountability_seat_people and
+// accountability_seat_links (a seat's parentIds beyond the first entry), in
+// one transaction. A seat's "person" string joined by ";" is several people;
+// each name is matched against active people's names and aliases
+// case-insensitively to set person_id (and store the canonical name), and kept
+// as written text when nothing matches. Refuses when a chart with the same
+// title and status already exists, unless --replace deletes and reloads that
+// chart.
 
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { neon } from '@neondatabase/serverless';
-import { normalizePeople, sanitizeRoles } from '../src/lib/accountability.ts';
+import { descendantIds, normalizePeople, sanitizeRoles } from '../src/lib/accountability.ts';
 
 // ── Pure helpers (tested in tests/accountability-seed.test.mjs, no DB) ──────
 
 const nameKey = (text) => text.trim().toLowerCase();
+
+/**
+ * A seat's parents as a list: `parentIds` when the seed gives it (the first
+ * entry is the primary parent, the rest are extra-parent links), otherwise the
+ * single `parentId`. Always non-empty; the root's one entry is null.
+ */
+const parentsOf = (seat, title) => {
+  if (Array.isArray(seat.parentIds)) {
+    if (seat.parentIds.length === 0) {
+      throw new Error(`Chart "${title}": seat "${seat.id}" has an empty parentIds list.`);
+    }
+    return seat.parentIds;
+  }
+  return [seat.parentId === undefined ? null : seat.parentId];
+};
 
 /**
  * Name-key index over active people: full names plus aliases, lower-cased and
@@ -54,9 +71,11 @@ export function matchName(text, index) {
 
 /**
  * Turns one seed chart into insert rows: the chart, its seats (parents before
- * children, seed order among siblings, sort_order counted per parent) and the
- * seat people. Throws a plain Error on a broken chart (no name, bad status,
- * duplicate seat id, not exactly one root, unknown or cyclic parent).
+ * children, seed order among siblings, sort_order counted per parent), the
+ * seat people and the extra-parent links (`parentIds` beyond the first
+ * entry). Throws a plain Error on a broken chart (no name, bad status,
+ * duplicate seat id, not exactly one root, unknown or cyclic parent, an extra
+ * parent that is unknown, the seat itself or inside its subtree).
  */
 export function planChart(chart, nameIndex, makeId = randomUUID) {
   const title = typeof chart?.name === 'string' ? chart.name.trim() : '';
@@ -73,7 +92,7 @@ export function planChart(chart, nameIndex, makeId = randomUUID) {
     if (bySeedId.has(id)) throw new Error(`Chart "${title}": duplicate seat id "${id}".`);
     bySeedId.set(id, s);
   }
-  const roots = seatsIn.filter((s) => s.parentId === null || s.parentId === undefined);
+  const roots = seatsIn.filter((s) => parentsOf(s, title)[0] === null);
   if (roots.length !== 1) {
     throw new Error(`Chart "${title}": a chart has one root seat (found ${roots.length}).`);
   }
@@ -83,22 +102,24 @@ export function planChart(chart, nameIndex, makeId = randomUUID) {
   const siblingCount = new Map(); // parent seed id (null = root) -> next sort_order
   const seats = [];
   const people = [];
+  const links = [];
   const unmatched = [];
   let matched = 0;
 
   let pending = seatsIn.slice();
   while (pending.length) {
-    // Seats whose parent is the root or already placed go next, in seed order.
-    const ready = pending.filter(
-      (s) => s.parentId === null || s.parentId === undefined || newIds.has(s.parentId)
-    );
+    // Seats whose primary parent is the root or already placed go next, in seed order.
+    const ready = pending.filter((s) => {
+      const primary = parentsOf(s, title)[0];
+      return primary === null || newIds.has(primary);
+    });
     if (!ready.length) {
-      const stuck = pending.map((s) => `"${s.id}" (parent "${s.parentId}")`).join(', ');
+      const stuck = pending.map((s) => `"${s.id}" (parent "${parentsOf(s, title)[0]}")`).join(', ');
       throw new Error(`Chart "${title}": seats with an unknown or cyclic parent: ${stuck}.`);
     }
     for (const s of ready) {
       pending = pending.filter((x) => x !== s);
-      const parentId = s.parentId === null || s.parentId === undefined ? null : s.parentId;
+      const parentId = parentsOf(s, title)[0];
       const seatTitle = typeof s.title === 'string' ? s.title.trim() : '';
       if (!seatTitle) throw new Error(`Chart "${title}": seat "${s.id}" has no title.`);
       const id = makeId();
@@ -123,6 +144,26 @@ export function planChart(chart, nameIndex, makeId = randomUUID) {
     }
   }
 
+  // Extra parents (parentIds beyond the first entry): same chart, not the
+  // seat, not inside its subtree — the API's cycle rule over both edge sets.
+  for (const s of seatsIn) {
+    const parents = parentsOf(s, title);
+    const seatId = newIds.get(s.id);
+    for (const extra of [...new Set(parents.slice(1))]) {
+      if (extra === parents[0]) continue; // the primary parent is not a link
+      if (typeof extra !== 'string' || !bySeedId.has(extra)) {
+        throw new Error(`Chart "${title}": seat "${s.id}" has an unknown extra parent "${extra}".`);
+      }
+      const parentId = newIds.get(extra);
+      if (descendantIds(seats, seatId, links).has(parentId)) {
+        throw new Error(
+          `Chart "${title}": extra parent "${extra}" of seat "${s.id}" is the seat itself or inside its subtree.`
+        );
+      }
+      links.push({ seat_id: seatId, parent_id: parentId });
+    }
+  }
+
   return {
     key: chart.key,
     title,
@@ -130,6 +171,7 @@ export function planChart(chart, nameIndex, makeId = randomUUID) {
     chartId,
     seats,
     people,
+    links,
     matched,
     unmatched: [...new Set(unmatched)],
   };
@@ -139,10 +181,11 @@ export function planChart(chart, nameIndex, makeId = randomUUID) {
 
 const USAGE = `Usage: node scripts/accountability-seed.mjs <path-to-seed.json> [--replace]
 
-Loads every chart in the seed file into accountability_charts, accountability_seats
-and accountability_seat_people in one transaction, matching seat names against
-active people (name + aliases, case-insensitive). Refuses when a chart with the
-same title and status already exists, unless --replace deletes and reloads it.
+Loads every chart in the seed file into accountability_charts, accountability_seats,
+accountability_seat_people and accountability_seat_links (a seat's parentIds
+beyond the first entry) in one transaction, matching seat names against active
+people (name + aliases, case-insensitive). Refuses when a chart with the same
+title and status already exists, unless --replace deletes and reloads it.
 
 Needs NETLIFY_DATABASE_URL (or DATABASE_URL) set to the Postgres connection string.`;
 
@@ -214,19 +257,25 @@ async function main() {
         insert into accountability_seat_people (seat_id, person_id, person, sort_order)
         values (${p.seat_id}, ${p.person_id}, ${p.person}, ${p.sort_order})`);
     }
+    for (const l of plan.links) {
+      queries.push(sql`
+        insert into accountability_seat_links (seat_id, parent_id)
+        values (${l.seat_id}, ${l.parent_id})`);
+    }
   }
   if (queries.length) await sql.transaction(queries);
 
   const seats = plans.reduce((n, p) => n + p.seats.length, 0);
   const peopleCount = plans.reduce((n, p) => n + p.people.length, 0);
+  const linkCount = plans.reduce((n, p) => n + p.links.length, 0);
   const matched = plans.reduce((n, p) => n + p.matched, 0);
   console.log(
-    `Loaded ${plans.length} chart(s), ${seats} seats, ${peopleCount} seat people (${matched} matched, ${peopleCount - matched} unmatched).`
+    `Loaded ${plans.length} chart(s), ${seats} seats, ${peopleCount} seat people (${matched} matched, ${peopleCount - matched} unmatched), ${linkCount} extra-parent link(s).`
   );
   if (replaced.length) console.log(`Replaced: ${replaced.map((t) => `"${t}"`).join(', ')}`);
   for (const p of plans) {
     console.log(
-      `  ${p.title} [${p.status}] — ${p.seats.length} seats, ${p.people.length} people (${p.matched} matched, ${p.people.length - p.matched} unmatched)`
+      `  ${p.title} [${p.status}] — ${p.seats.length} seats, ${p.people.length} people (${p.matched} matched, ${p.people.length - p.matched} unmatched), ${p.links.length} link(s)`
     );
   }
   const unmatchedNames = [...new Set(plans.flatMap((p) => p.unmatched))];
