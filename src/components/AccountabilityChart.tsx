@@ -19,12 +19,17 @@ import { toPng } from 'html-to-image';
 import '@xyflow/react/dist/style.css';
 import {
   MAX_ROLES,
+  SEAT_NODE_WIDTH,
+  allowedParentIds,
   buildLayout,
+  descendantIds,
   edgesFromSeats,
   normalizePeople,
+  pickDropTarget,
   sanitizeRoles,
   validateReparent,
   type ChartRow,
+  type DropRect,
   type LayoutEdge,
   type LayoutNode,
   type LayoutPositions,
@@ -73,22 +78,6 @@ function dagreLayout(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutPositions 
 const namesOf = (seat: SeatWithPeople): string[] =>
   (seat.people ?? []).map((p) => p.person).filter((n): n is string => !!n);
 
-/** A seat and every seat below it (what a delete removes). */
-function subtreeIds(seats: SeatWithPeople[], id: string): Set<string> {
-  const out = new Set<string>([id]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const s of seats) {
-      if (s.parent_id && out.has(s.parent_id) && !out.has(s.id)) {
-        out.add(s.id);
-        grew = true;
-      }
-    }
-  }
-  return out;
-}
-
 /** Seat titles indented by depth, for the add form's parent picker. */
 function seatOptions(seats: SeatWithPeople[]): Array<{ id: string; label: string }> {
   const byParent = new Map<string | null, SeatWithPeople[]>();
@@ -114,6 +103,8 @@ type SeatNodeData = {
   roles: string[];
   notes: string | null;
   editing: boolean;
+  /** True while a dragged card's pointer is over this seat: the drop target. */
+  dropTarget: boolean;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
 };
@@ -121,12 +112,16 @@ type SeatNodeData = {
 type SeatFlowNode = Node<SeatNodeData, 'seat'>;
 
 function SeatNode({ id, data }: NodeProps<SeatFlowNode>) {
-  const { title, names, roles, notes, editing, onEdit, onDelete } = data;
+  const { title, names, roles, notes, editing, dropTarget, onEdit, onDelete } = data;
   const tooltip = [title, names.join('; '), ...roles, notes ?? ''].filter((s) => s !== '').join('\n');
   return (
     <div
       className={`w-[240px] max-h-[200px] overflow-hidden rounded-xl border bg-bg-surface shadow-card px-3 py-2 ${
-        editing ? 'border-accent ring-2 ring-accent/30' : 'border-line'
+        dropTarget
+          ? 'border-accent ring-2 ring-accent/50'
+          : editing
+            ? 'border-accent ring-2 ring-accent/30'
+            : 'border-line'
       }`}
       title={tooltip}
     >
@@ -216,6 +211,7 @@ function seatsToNodes(
       roles: seat.roles ?? [],
       notes: seat.notes,
       editing: editingId === seat.id,
+      dropTarget: false,
       onEdit,
       onDelete,
     },
@@ -244,8 +240,10 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
   const [formRoles, setFormRoles] = useState('');
   const [formNotes, setFormNotes] = useState('');
   const [formParent, setFormParent] = useState('');
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   const wrapper = useRef<HTMLDivElement>(null);
+  const didFit = useRef(false);
   const rf = useReactFlow();
 
   const closeForm = () => {
@@ -281,7 +279,7 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
   const deleteSeat = (id: string) => {
     const seat = seats.find((s) => s.id === id);
     if (!seat) return;
-    const below = subtreeIds(seats, id);
+    const below = descendantIds(seats, id);
     const count = below.size - 1;
     const label =
       count > 0 ? `"${seat.title}" and the ${count} seat${count === 1 ? '' : 's'} below it` : `"${seat.title}"`;
@@ -330,8 +328,11 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
   };
 
   // Nodes and edges follow the seats: layout recomputes after every change.
+  // fitView runs on the first layout only, so later changes keep the viewport.
   useEffect(() => {
     setNodes(seatsToNodes(seats, editingId, startEdit, deleteSeat));
+    if (didFit.current) return;
+    didFit.current = true;
     const frame = window.requestAnimationFrame(() => rf.fitView({ padding: 0.12, duration: 200 }));
     return () => window.cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,27 +354,48 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
     [seats]
   );
 
-  /** Drop on another card = re-parent; drop on empty canvas = snap back. */
-  const onNodeDragStop = (_event: MouseEvent | TouchEvent, dragged: SeatFlowNode) => {
-    const rect = (n: Node) => ({
-      x: n.position.x,
-      y: n.position.y,
-      w: n.measured?.width ?? 240,
-      h: n.measured?.height ?? LAYOUT_NODE_HEIGHT,
-    });
-    const a = rect(dragged);
-    const target = rf
-      .getIntersectingNodes(dragged)
-      .filter((n) => n.id !== dragged.id)
-      .map((n) => {
-        const b = rect(n);
-        const overlap =
-          Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) *
-          Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
-        return { id: n.id, overlap };
-      })
-      .sort((x, y) => y.overlap - x.overlap)[0];
-    const moved = target && target.overlap > 0 ? reparent(dragged.id, target.id) : false;
+  /** The drag pointer in flow coordinates, or null when a touch has no active point. */
+  const pointerToFlow = (event: MouseEvent | TouchEvent) => {
+    const src = 'clientX' in event ? event : event.touches[0];
+    return src ? rf.screenToFlowPosition({ x: src.clientX, y: src.clientY }) : null;
+  };
+
+  /** Each seat's card box in flow coordinates, at its current (dragged) position. */
+  const dropRects = (): Record<string, DropRect> => {
+    const out: Record<string, DropRect> = {};
+    for (const n of rf.getNodes()) {
+      out[n.id] = {
+        x: n.position.x,
+        y: n.position.y,
+        width: n.measured?.width ?? SEAT_NODE_WIDTH,
+        height: n.measured?.height ?? LAYOUT_NODE_HEIGHT,
+      };
+    }
+    return out;
+  };
+
+  /** Highlights the card under the pointer without touching node positions. */
+  const setDropTarget = (id: string | null) => {
+    if (dropTargetId === id) return;
+    setDropTargetId(id);
+    setNodes((prev) => prev.map((n) => ({ ...n, data: { ...n.data, dropTarget: n.id === id } })));
+  };
+
+  /** While dragging, the card under the pointer (never the dragged seat or its
+   *  descendants) highlights as the drop target. */
+  const onNodeDrag = (event: MouseEvent | TouchEvent, dragged: SeatFlowNode) => {
+    const pointer = pointerToFlow(event);
+    if (!pointer) return;
+    setDropTarget(pickDropTarget(seats, dragged.id, pointer, dropRects()));
+  };
+
+  /** Drop on a highlighted card = re-parent; drop anywhere else = snap back to
+   *  the layout position, no request. */
+  const onNodeDragStop = (event: MouseEvent | TouchEvent, dragged: SeatFlowNode) => {
+    const pointer = pointerToFlow(event);
+    const targetId = pointer ? pickDropTarget(seats, dragged.id, pointer, dropRects()) : null;
+    setDropTarget(null);
+    const moved = targetId ? reparent(dragged.id, targetId) : false;
     if (!moved) setNodes(seatsToNodes(seats, editingId, startEdit, deleteSeat));
   };
 
@@ -492,6 +514,15 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
 
   const formOpen = adding || editingId !== null;
 
+  // The edit form's Reports-to picker: every seat except the seat itself and
+  // its descendants (what allowedParentIds leaves); changes re-parent through
+  // the same reparent PATCH as a drag.
+  const editSeat = editingId ? seats.find((s) => s.id === editingId) : undefined;
+  const allowedParents = useMemo(
+    () => (editSeat ? new Set(allowedParentIds(seats, editSeat.id)) : null),
+    [seats, editSeat]
+  );
+
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -545,6 +576,25 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
               aria-label="Seat people"
             />
           </div>
+          {editSeat && allowedParents && (
+            <select
+              className="input text-sm"
+              value={editSeat.parent_id ?? ''}
+              onChange={(e) => {
+                if (e.target.value) reparent(editSeat.id, e.target.value);
+              }}
+              aria-label="Reports to"
+            >
+              {editSeat.parent_id === null && <option value="">Top of chart</option>}
+              {seatOptions(seats)
+                .filter((o) => allowedParents.has(o.id))
+                .map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+            </select>
+          )}
           {adding && seats.length > 0 && (
             <select
               className="input text-sm"
@@ -595,6 +645,7 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
           edges={edges}
           onNodesChange={onNodesChange}
           nodeTypes={nodeTypes}
+          onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           fitView
           fitViewOptions={{ padding: 0.12 }}
@@ -609,8 +660,9 @@ function Chart({ chart, seats: initialSeats, canPromote = false }: Accountabilit
         </ReactFlow>
       </div>
       <p className="mt-2 text-xs text-ink-muted">
-        Drag a card onto another card to re-parent it. The Visionary to Integrator connector is dotted; a
-        "shared" tag marks a seat that needs to come back to one name.
+        Drag a card and drop it with the pointer over another card (it highlights) to re-parent it, or use
+        "Reports to" in the edit form. The Visionary to Integrator connector is dotted; a "shared" tag marks
+        a seat that needs to come back to one name.
       </p>
     </div>
   );
