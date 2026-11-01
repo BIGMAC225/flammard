@@ -116,3 +116,56 @@ test('planChart throws on a second root, a missing parent and a bad status', () 
   assert.throws(() => planChart(orphan, index), /unknown or cyclic parent/);
   assert.throws(() => planChart({ name: 'Broken', status: 'archived', seats: [] }, index), /status/);
 });
+
+// ── parentIds: the first entry is the primary parent, the rest are links ────
+
+test('planChart: parentIds makes the first entry the primary parent and the rest links', () => {
+  const pooled = {
+    name: 'Pooled', status: 'proposal',
+    seats: [
+      { id: 'root', parentId: null, title: 'Root' },
+      { id: 'tax-jude', parentId: 'root', title: 'Tax-Jude' },
+      { id: 'tax-jen', parentId: 'root', title: 'Tax-Jen' },
+      { id: 'staff', parentIds: ['tax-jude', 'tax-jen'], title: 'Tax Staff 1' },
+    ],
+  };
+  const plan = planChart(pooled, buildNameIndex(PEOPLE));
+  const byTitle = new Map(plan.seats.map((s) => [s.title, s]));
+  assert.equal(byTitle.get('Tax Staff 1').parent_id, byTitle.get('Tax-Jude').id);
+  assert.deepEqual(plan.links, [
+    { seat_id: byTitle.get('Tax Staff 1').id, parent_id: byTitle.get('Tax-Jen').id },
+  ]);
+  // the shipped seed JSON has no parentIds: no links
+  const plans = seed.charts.map((c) => planChart(c, buildNameIndex(PEOPLE)));
+  assert.ok(plans.every((p) => p.links.length === 0));
+});
+
+test('planChart throws on a bad extra parent: unknown, the seat itself, inside its subtree', () => {
+  const index = buildNameIndex(PEOPLE);
+  const unknown = {
+    name: 'Broken', status: 'proposal',
+    seats: [
+      { id: 'root', parentId: null, title: 'Root' },
+      { id: 'a', parentIds: ['root', 'ghost'], title: 'A' },
+    ],
+  };
+  assert.throws(() => planChart(unknown, index), /unknown extra parent/);
+  const self = {
+    name: 'Broken', status: 'proposal',
+    seats: [
+      { id: 'root', parentId: null, title: 'Root' },
+      { id: 'a', parentIds: ['root', 'a'], title: 'A' },
+    ],
+  };
+  assert.throws(() => planChart(self, index), /inside its subtree/);
+  // b sits below a in the primary tree: a cannot also report to b
+  const cycle = {
+    name: 'Broken', status: 'proposal',
+    seats: [
+      { id: 'root', parentId: null, title: 'Root' },
+      { id: 'a', parentIds: ['root', 'b'], title: 'A' },
+      { id: 'b', parentId: 'a', title: 'B' },
+    ],
+  };
+  assert.throws(() => planChart(cycle, index), /inside its subtree/);
+});

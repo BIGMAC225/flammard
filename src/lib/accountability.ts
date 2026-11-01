@@ -65,19 +65,24 @@ export function normalizePeople(input: unknown): string[] {
   return out;
 }
 
-// ── The seat tree ───────────────────────────────────────────────────────────
+// ── The seat tree and its extra-parent links ────────────────────────────────
 
 export type ReparentSeat = { id: string; parent_id: string | null };
+
+/** One extra reporting line: `seat_id` also reports to `parent_id`. */
+export type SeatLink = { seat_id: string; parent_id: string };
 
 /**
  * Whether the seat may move under `newParentId` (null = root). Rejects a seat
  * parenting itself, a parent outside this chart, a parent that would make the
- * seat its own ancestor, and a second root — each chart keeps exactly one.
+ * seat its own ancestor (through primary or extra edges), and a second root —
+ * each chart keeps exactly one.
  */
 export function validateReparent(
   seats: ReparentSeat[],
   id: string,
-  newParentId: string | null
+  newParentId: string | null,
+  links: SeatLink[] = []
 ): { ok: true } | { error: string } {
   const seat = seats.find((s) => s.id === id);
   if (!seat) return { error: 'Seat not found' };
@@ -87,23 +92,22 @@ export function validateReparent(
   }
   const parent = seats.find((s) => s.id === newParentId);
   if (!parent) return { error: 'Parent not found in this chart' };
-  // Walk up from the new parent; meeting the seat again would loop the tree.
-  // The seen set stops the walk if the stored rows ever carry a loop.
-  const seen = new Set<string>();
-  let cursor: ReparentSeat | undefined = parent;
-  while (cursor && !seen.has(cursor.id)) {
-    seen.add(cursor.id);
-    const parentId: string | null = cursor.parent_id;
-    if (parentId === id) return { error: 'That move would loop the tree' };
-    cursor = parentId ? seats.find((s) => s.id === parentId) : undefined;
+  // Everything reachable below the seat through primary and extra edges; a
+  // new parent drawn from that set would loop the chart.
+  if (descendantIds(seats, id, links).has(newParentId)) {
+    return { error: 'That move would loop the chart' };
   }
   return { ok: true };
 }
 
 // ── Drag to re-parent and the Reports-to list ───────────────────────────────
 
-/** A seat and every seat below it (what a delete removes, what can never be its parent). */
-export function descendantIds(seats: ReparentSeat[], id: string): Set<string> {
+/**
+ * A seat and every seat below it through primary and extra edges (what can
+ * never be its parent). Without `links` this is the primary-parent subtree,
+ * which is exactly what a delete's cascade removes.
+ */
+export function descendantIds(seats: ReparentSeat[], id: string, links: SeatLink[] = []): Set<string> {
   const out = new Set<string>([id]);
   let grew = true;
   while (grew) {
@@ -114,14 +118,38 @@ export function descendantIds(seats: ReparentSeat[], id: string): Set<string> {
         grew = true;
       }
     }
+    for (const l of links) {
+      if (out.has(l.parent_id) && !out.has(l.seat_id)) {
+        out.add(l.seat_id);
+        grew = true;
+      }
+    }
   }
   return out;
 }
 
 /** Every seat that may become `seatId`'s parent: all seats but itself and its descendants. */
-export function allowedParentIds(seats: ReparentSeat[], seatId: string): string[] {
-  const banned = descendantIds(seats, seatId);
+export function allowedParentIds(seats: ReparentSeat[], seatId: string, links: SeatLink[] = []): string[] {
+  const banned = descendantIds(seats, seatId, links);
   return seats.filter((s) => !banned.has(s.id)).map((s) => s.id);
+}
+
+/**
+ * The extra parent a child keeps when its primary parent is deleted: the
+ * first link (by created_at — the caller's order) whose parent is not in the
+ * doomed set, or null when every extra parent dies with the delete (the child
+ * goes with the subtree). `doomed` is primary-parent reachability, what the
+ * database cascade actually removes.
+ */
+export function survivingExtraParent(
+  links: SeatLink[],
+  childId: string,
+  doomed: Set<string>
+): string | null {
+  for (const l of links) {
+    if (l.seat_id === childId && !doomed.has(l.parent_id)) return l.parent_id;
+  }
+  return null;
 }
 
 /** A card's box in flow coordinates: top-left corner plus the rendered size. */
@@ -136,9 +164,10 @@ export function pickDropTarget(
   seats: ReparentSeat[],
   draggedId: string,
   pointer: { x: number; y: number },
-  rects: Record<string, DropRect>
+  rects: Record<string, DropRect>,
+  links: SeatLink[] = []
 ): string | null {
-  const banned = descendantIds(seats, draggedId);
+  const banned = descendantIds(seats, draggedId, links);
   for (const seat of seats) {
     if (banned.has(seat.id)) continue;
     const rect = rects[seat.id];
@@ -169,12 +198,14 @@ export type LayoutPositions = Record<string, { x: number; y: number }>;
  * Computes seat positions through an injected layout function (dagre,
  * top-to-bottom, in the UI — the lib stays dependency-free and testable).
  * buildLayout normalises what the function sees: seats in a deterministic
- * order (sort_order, then title, then id), one edge per parent link, parent
- * ids that point outside the chart dropped. Positions come back keyed by id.
+ * order (sort_order, then title, then id), one edge per parent link (primary
+ * plus extra, deduped), parent ids that point outside the chart dropped.
+ * Positions come back keyed by id.
  */
 export function buildLayout(
   seats: Array<Pick<SeatRow, 'id' | 'parent_id' | 'title' | 'sort_order'>>,
-  layout: (nodes: LayoutNode[], edges: LayoutEdge[]) => LayoutPositions
+  layout: (nodes: LayoutNode[], edges: LayoutEdge[]) => LayoutPositions,
+  links: SeatLink[] = []
 ): LayoutPositions {
   const byTitle = (a: { title: string }, b: { title: string }) =>
     a.title < b.title ? -1 : a.title > b.title ? 1 : 0;
@@ -193,6 +224,14 @@ export function buildLayout(
   const edges: LayoutEdge[] = ordered
     .filter((s) => s.parent_id !== null && ids.has(s.parent_id))
     .map((s) => ({ source: s.parent_id as string, target: s.id }));
+  const seen = new Set(edges.map((e) => `${e.source}->${e.target}`));
+  for (const l of links) {
+    const key = `${l.parent_id}->${l.seat_id}`;
+    if (ids.has(l.parent_id) && ids.has(l.seat_id) && !seen.has(key)) {
+      edges.push({ source: l.parent_id, target: l.seat_id });
+      seen.add(key);
+    }
+  }
   return layout(nodes, edges);
 }
 
@@ -202,16 +241,21 @@ export type SeatEdge = {
   target: string;
   type: 'smoothstep';
   dashed: boolean;
+  /** True for an extra-parent connector (an accountability_seat_links row). */
+  extra: boolean;
 };
 
 const titleKey = (t: string) => t.trim().toLowerCase();
 
 /**
- * One edge per parent link. The Visionary → Integrator connector is dashed;
- * every other connector is solid. All connectors are smoothstep.
+ * One edge per parent link: the primary parent first, then every extra-parent
+ * link (flagged `extra` so the UI can style it apart). The Visionary →
+ * Integrator connector is dashed; every other connector is solid. All
+ * connectors are smoothstep.
  */
 export function edgesFromSeats(
-  seats: Array<Pick<SeatRow, 'id' | 'parent_id' | 'title'>>
+  seats: Array<Pick<SeatRow, 'id' | 'parent_id' | 'title'>>,
+  links: SeatLink[] = []
 ): SeatEdge[] {
   const titles = new Map(seats.map((s) => [s.id, titleKey(s.title)]));
   const out: SeatEdge[] = [];
@@ -225,6 +269,18 @@ export function edgesFromSeats(
       target: seat.id,
       type: 'smoothstep',
       dashed,
+      extra: false,
+    });
+  }
+  for (const l of links) {
+    if (!titles.has(l.parent_id) || !titles.has(l.seat_id)) continue;
+    out.push({
+      id: `link-${l.parent_id}-${l.seat_id}`,
+      source: l.parent_id,
+      target: l.seat_id,
+      type: 'smoothstep',
+      dashed: false,
+      extra: true,
     });
   }
   return out;
